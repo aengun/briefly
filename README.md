@@ -1,36 +1,56 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🎙️ Briefly <br/> _Internal Meeting Summarizer_
 
-## Getting Started
+![Next.js](https://img.shields.io/badge/Next.js-16.2-black?style=flat&logo=next.js)
+![React](https://img.shields.io/badge/React-19-blue?style=flat&logo=react)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4.0-38B2AC?style=flat&logo=tailwind-css)
+![Google Gemini](https://img.shields.io/badge/Gemini_2.5_Flash-AI-orange?style=flat&logo=google)
 
-First, run the development server:
+**Briefly**는 회의 녹음 파일(Audio)을 업로드하면 음성을 텍스트로 자동 변환(STT)하고, 이를 바탕으로 구조화된 업무 요약 보고서를 생성해 주는 지능형 웹 애플리케이션입니다.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## ✨ 주요 기능 (Features)
+
+- 🎧 **손쉬운 파일 업로드**: MP3, WAV, M4A 등 다양한 형식의 회의 오디오 녹음 파일 지원 및 드래그 앤 드롭 기능
+- 📝 **STT 변환 (Speech-to-Text)**: 최신 Google Gemini AI(2.5 Flash) 기반의 고성능 음성 텍스트 변환
+- 📊 **자동 요약 보고서 (Executive Summary)**:
+  - **As-Is**: 현재 문제점 및 회의 현황/배경 정리
+  - **To-Be**: 회의를 통해 도출된 개선된 목표 상황
+  - **Expected Effects**: 목표 달성 시의 기대 효과
+  - **Timeline & Tasks**: 할 일(Task), 담당자, 기한이 포함된 동적 일정 테이블(직접 텍스트 수정 및 행 추가 가능)
+
+## 🚀 시작하기 (Getting Started)
+
+### 1. 환경 변수 설정
+프로젝트 최상단 루트 디렉토리에 `.env.local` 파일을 생성하고 발급받은 실제 Gemini API Key를 입력하세요.
+
+```env
+GEMINI_API_KEY=당신의_제미나이_API_키를_입력하세요
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. 패키지 설치 및 실행
+아래 명령어를 통해 의존성을 설치하고 개발 서버를 시작합니다.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+# 1. 패키지 설치
+npm install
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+# 2. 개발 서버 실행
+npm run dev
+```
 
-## Learn More
+서버가 실행되면 웹 브라우저를 열고 [http://localhost:3000](http://localhost:3000) 에 접속하여 애플리케이션을 확인할 수 있습니다.
 
-To learn more about Next.js, take a look at the following resources:
+## 🛠️ 기술 스택 (Tech Stack)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **Framework**: [Next.js](https://nextjs.org/) (App Router 기반)
+- **Styling**: [Tailwind CSS v4](https://tailwindcss.com/)
+- **Icons**: [Lucide React](https://lucide.dev/)
+- **AI Model**: [Google Generative AI](https://ai.google.dev/) (`gemini-2.5-flash` 모델 사용)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 💡 사용 방법
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. 메인 화면 중앙의 업로드 영역을 클릭하거나 오디오 파일을 직접 끌어다 놓으세요.
+2. 오디오가 정상적으로 첨부된 것을 확인한 후, **`요약 시작하기`** 버튼을 클릭합니다.
+3. 잠시 로딩(AI 문맥 요약 중) 후, 화면이 좌우로 나뉘며 정보가 표시됩니다.
+   - **왼쪽**: AI가 실제로 오디오에서 추출한 모든 대화 텍스트 원본 (STT Transcript)
+   - **오른쪽**: 비즈니스 포맷으로 정돈된 요약 정보 및 액션 아이템들 (Executive Summary)
+4. 생성된 일정표(Timeline & Tasks)는 클릭하여 내용을 수정할 수 있으며, `+ Add Row` 버튼을 눌러 항목을 추가할 수 있습니다.
