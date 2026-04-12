@@ -1,14 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import { GoogleAIFileManager } from '@google/generative-ai/server';
-import { writeFile } from 'fs/promises';
+import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
-import { tmpdir } from 'os';
+import { existsSync } from 'fs';
 
 // Initialize Gemini API
 const apiKey = process.env.GEMINI_API_KEY || '';
 const genAI = new GoogleGenerativeAI(apiKey);
 const fileManager = new GoogleAIFileManager(apiKey);
+
+// Robust JSON extraction helper
+function extractJSON(text: string): any {
+  try {
+    // Try finding JSON block
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    
+    // Basic cleanup of common AI artifacts in JSON
+    let jsonStr = match[0]
+      .replace(/\\n/g, "\\n")
+      .replace(/\\'/g, "'");
+      
+    return JSON.parse(jsonStr);
+  } catch (e) {
+    console.error('Failed to parse extracted JSON:', e);
+    return null;
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,13 +38,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
     }
 
-    // Save file to public/uploads and temp dir
+    // Save file to public/uploads
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
     const fileName = `${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
     const uploadDir = join(process.cwd(), 'public', 'uploads');
-    const uploadPath = join(uploadDir, fileName);
     
+    if (!existsSync(uploadDir)) {
+      await mkdir(uploadDir, { recursive: true });
+    }
+    
+    const uploadPath = join(uploadDir, fileName);
     await writeFile(uploadPath, buffer);
     const audioUrl = `/uploads/${fileName}`;
 
@@ -35,59 +58,81 @@ export async function POST(req: NextRequest) {
       displayName: fileName,
     });
 
-    // Generate content
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const safetySettings = [
+      { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+    ];
 
-    const prompt = `
-이 오디오는 여러 사람이 참석한 회의 녹음 파일입니다. 다음 요청사항에 맞게 분석해주세요:
-1. 먼저 오디오의 내용을 전체적으로 파악하여 화자를 구분(Diarization)해서 텍스트로 변환(STT)해주세요. 화자는 "참가자 A", "참가자 B" 등으로 임의 배정하되, 대화를 듣고 일관성 있게 구분해주세요.
-2. 변환된 내용을 바탕으로 다음 포맷의 JSON으로 요약해주세요. 응답은 오직 올바른 JSON 포맷이어야 합니다.
+    // Using gemini-flash-latest (Stable 1.5)
+    const model = genAI.getGenerativeModel({ 
+      model: 'gemini-flash-latest', 
+      safetySettings
+    });
 
-요청 JSON 구조:
+    // --- STEP 1: SUMMARY PASS ---
+    const summaryPrompt = `
+이 오디오는 회의 녹음 파일입니다. 다음 구조의 JSON 형식으로 회의를 요약해주세요. 
+반드시 올바른 JSON 형식으로 시작하고 끝내주세요. 다른 서설은 생략하세요.
+
 {
-  "transcript": [
-    {
-      "speaker": "참가자 A",
-      "text": "안녕하세요, 회의 시작하겠습니다."
-    }
-  ],
   "summary": {
-    "asis": "현재 상황 (As-is)에 대한 요약",
-    "tobe": "목표 또는 개선 후 상황 (To-be)에 대한 요약",
+    "asis": "현재 상황 요약",
+    "tobe": "목표 및 해결책 요약",
     "expected_effects": "기대 효과",
     "schedule": [
-      {
-        "task": "할 일",
-        "assignee": "담당자 (알 수 없으면 미정)",
-        "dueDate": "기한 (알 수 없으면 미정 내지 날짜)"
-      }
+      { "task": "할 일", "assignee": "담당자", "dueDate": "기한" }
     ]
   }
 }
 `;
 
-    const result = await model.generateContent([
-      {
-        fileData: {
-          fileUri: uploadResult.file.uri,
-          mimeType: uploadResult.file.mimeType,
-        },
-      },
-      prompt,
+    const summaryResult = await model.generateContent([
+      { fileData: { fileUri: uploadResult.file.uri, mimeType: uploadResult.file.mimeType } },
+      summaryPrompt,
     ]);
 
-    const text = result.response.text();
-    // parse JSON from text (in case it includes markdown code blocks)
-    let jsonStr = text.trim();
-    if (jsonStr.startsWith('\`\`\`json')) {
-      jsonStr = jsonStr.replace(/\`\`\`json/g, '').replace(/\`\`\`/g, '').trim();
-    } else if (jsonStr.startsWith('\`\`\`')) {
-      jsonStr = jsonStr.replace(/\`\`\`/g, '').trim();
+    const summaryText = summaryResult.response.text();
+    const summaryData = extractJSON(summaryText);
+    
+    if (!summaryData) {
+      console.error('Final attempt summary text:', summaryText);
+      throw new Error("요약 데이터 추출에 실패했습니다. (AI 응답 불완전)");
     }
 
-    const parsed = JSON.parse(jsonStr);
+    // --- STEP 2: TRANSCRIPT PASS ---
+    const transcriptPrompt = `
+오디오의 전체 대화 내역(transcript)을 다음 JSON 형식으로 변환해주세요.
+반드시 JSON 형식만 출력하세요. 다른 말은 하지 마세요.
 
-    return NextResponse.json({ ...parsed, audioUrl });
+{
+  "transcript": [
+    { "speaker": "성함 또는 참가자 A", "text": "대화 내용" }
+  ]
+}
+`;
+
+    const transcriptResult = await model.generateContent([
+      { fileData: { fileUri: uploadResult.file.uri, mimeType: uploadResult.file.mimeType } },
+      transcriptPrompt,
+    ]);
+
+    const transcriptText = transcriptResult.response.text();
+    let transcriptData = extractJSON(transcriptText);
+    
+    if (!transcriptData) {
+      console.error('Final attempt transcript text:', transcriptText);
+      transcriptData = { transcript: [] }; // Fallback
+    }
+
+    // --- COMBINE AND RETURN ---
+    return NextResponse.json({
+      ...summaryData,
+      ...transcriptData,
+      audioUrl
+    });
+
   } catch (error: any) {
     console.error('Error during summarization:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });

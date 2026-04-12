@@ -1,12 +1,20 @@
-import { getDb } from '@/lib/db';
+import prisma from '@/lib/prisma';
 import Link from 'next/link';
 import { Calendar, Users, ChevronRight, FileAudio } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
 export default async function ArchivesPage() {
-  const db = getDb();
-  const meetings = db.meetings || [];
+  const meetings = (await prisma.meeting.findMany({
+    orderBy: { meetingDate: 'desc' },
+    include: { participants: true }
+  } as any)) as any[];
+
+  // Ensure type safety for meetingDate
+  const safeMeetings = meetings.map(m => ({
+    ...m,
+    meetingDate: m.meetingDate || m.createdAt // Fallback just in case
+  }));
 
   return (
     <main className="max-w-6xl mx-auto px-4 py-8 flex flex-col gap-12">
@@ -25,7 +33,7 @@ export default async function ArchivesPage() {
             <h3 className="text-xl text-white/50 font-medium">저장된 회의 기록이 없습니다.</h3>
           </div>
         ) : (
-          meetings.map((m) => (
+          safeMeetings.map((m) => (
             <Link 
               key={m.id} 
               href={`/archives/${m.id}`}
@@ -42,9 +50,9 @@ export default async function ArchivesPage() {
               
               <div className="space-y-2">
                 <h3 className="text-xl font-bold text-white line-clamp-1">{m.title || "제목 없는 회의"}</h3>
-                <div className="flex items-center gap-2 text-sm text-white/60">
+                <div className="flex items-center gap-2 text-sm text-cyan-300 font-medium">
                   <Calendar className="w-4 h-4" />
-                  <span>{new Date(m.createdAt).toLocaleDateString()}</span>
+                  <span>{new Date(m.meetingDate).toLocaleDateString()}</span>
                 </div>
                 <div className="flex items-center gap-2 text-sm text-white/60">
                   <Users className="w-4 h-4" />
@@ -56,7 +64,7 @@ export default async function ArchivesPage() {
               
               <div className="flex-1">
                 <p className="text-sm text-white/70 line-clamp-2 leading-relaxed">
-                  {m.summary?.asis || "요약 내용이 없습니다."}
+                  {m.asis || "요약 내용이 없습니다."}
                 </p>
               </div>
             </Link>

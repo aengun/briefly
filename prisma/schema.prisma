@@ -1,0 +1,47 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Meeting {
+  id               String        @id @default(uuid())
+  title            String
+  createdAt        DateTime      @default(now())
+  meetingDate      DateTime      @default(now())
+  audioUrl         String
+  asis             String
+  tobe             String
+  expected_effects String
+  participants     Participant[]
+  transcript       Transcript[]
+  schedule         Schedule[]
+}
+
+model Participant {
+  id        String  @id @default(uuid())
+  team      String
+  name      String
+  meetingId String
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+}
+
+model Transcript {
+  id        String  @id @default(uuid())
+  speaker   String
+  text      String
+  meetingId String
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+}
+
+model Schedule {
+  id        String  @id @default(uuid())
+  task      String
+  assignee  String
+  dueDate   String
+  meetingId String
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+}
