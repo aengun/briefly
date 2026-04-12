@@ -19,29 +19,38 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
     }
 
-    // Save file to temp dir
+    // Save file to public/uploads and temp dir
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
-    const tmpPath = join(tmpdir(), file.name);
-    await writeFile(tmpPath, buffer);
+    const fileName = `${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
+    const uploadDir = join(process.cwd(), 'public', 'uploads');
+    const uploadPath = join(uploadDir, fileName);
+    
+    await writeFile(uploadPath, buffer);
+    const audioUrl = `/uploads/${fileName}`;
 
     // Upload to Gemini
-    const uploadResult = await fileManager.uploadFile(tmpPath, {
+    const uploadResult = await fileManager.uploadFile(uploadPath, {
       mimeType: file.type || 'audio/mpeg',
-      displayName: file.name,
+      displayName: fileName,
     });
 
     // Generate content
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const prompt = `
-이 오디오는 회의 녹음 파일입니다. 다음 요청사항에 맞게 분석해주세요:
-1. 먼저 오디오의 내용을 전체적으로 파악하여 텍스트로 변환(STT)해주세요.
+이 오디오는 여러 사람이 참석한 회의 녹음 파일입니다. 다음 요청사항에 맞게 분석해주세요:
+1. 먼저 오디오의 내용을 전체적으로 파악하여 화자를 구분(Diarization)해서 텍스트로 변환(STT)해주세요. 화자는 "참가자 A", "참가자 B" 등으로 임의 배정하되, 대화를 듣고 일관성 있게 구분해주세요.
 2. 변환된 내용을 바탕으로 다음 포맷의 JSON으로 요약해주세요. 응답은 오직 올바른 JSON 포맷이어야 합니다.
 
 요청 JSON 구조:
 {
-  "transcript": "회의 전체 내용 원본 텍스트...",
+  "transcript": [
+    {
+      "speaker": "참가자 A",
+      "text": "안녕하세요, 회의 시작하겠습니다."
+    }
+  ],
   "summary": {
     "asis": "현재 상황 (As-is)에 대한 요약",
     "tobe": "목표 또는 개선 후 상황 (To-be)에 대한 요약",
@@ -78,7 +87,7 @@ export async function POST(req: NextRequest) {
 
     const parsed = JSON.parse(jsonStr);
 
-    return NextResponse.json(parsed);
+    return NextResponse.json({ ...parsed, audioUrl });
   } catch (error: any) {
     console.error('Error during summarization:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
