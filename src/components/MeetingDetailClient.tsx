@@ -141,7 +141,12 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
                     className="bg-white/10 border border-white/20 rounded-lg px-3 py-1 text-white outline-none focus:border-cyan-400 text-sm"
                   />
                 ) : (
-                  <span>{new Date(meeting.meetingDate).toLocaleDateString()}</span>
+                  <span>
+                    {(() => {
+                      const d = new Date(meeting.meetingDate);
+                      return `${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}.`;
+                    })()}
+                  </span>
                 )}
               </div>
               <div className="flex items-center gap-2">

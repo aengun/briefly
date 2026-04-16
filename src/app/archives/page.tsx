@@ -52,7 +52,12 @@ export default async function ArchivesPage() {
                 <h3 className="text-xl font-bold text-white line-clamp-1">{m.title || "제목 없는 회의"}</h3>
                 <div className="flex items-center gap-2 text-sm text-cyan-300 font-medium">
                   <Calendar className="w-4 h-4" />
-                  <span>{new Date(m.meetingDate).toLocaleDateString()}</span>
+                  <span>
+                    {(() => {
+                      const d = new Date(m.meetingDate);
+                      return `${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}.`;
+                    })()}
+                  </span>
                 </div>
                 <div className="flex items-center gap-2 text-sm text-white/60">
                   <Users className="w-4 h-4" />

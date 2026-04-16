@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+export const runtime = 'nodejs';
+
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import { GoogleAIFileManager } from '@google/generative-ai/server';
-import { writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
-import { existsSync } from 'fs';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { Buffer } from 'node:buffer';
 
 // Initialize Gemini API
 const apiKey = process.env.GEMINI_API_KEY || '';
@@ -29,7 +32,7 @@ function extractJSON(text: string): any {
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     const formData = await req.formData();
     const file = formData.get('file') as File;

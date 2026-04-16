@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 
+export const runtime = 'nodejs';
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+): Promise<NextResponse> {
   try {
     const { id } = await params;
     const body = await req.json();
@@ -22,44 +24,50 @@ export async function PATCH(
           tobe: summary?.tobe || undefined,
           expected_effects: summary?.expected_effects || undefined,
           meetingDate: body.meetingDate ? new Date(body.meetingDate) : undefined,
-        } as any
+        }
       });
 
       // 2. Sync Participants (Delete and Re-create for simplicity)
       if (participants) {
         await tx.participant.deleteMany({ where: { meetingId: id } });
-        await tx.participant.createMany({
-          data: participants.map((p: any) => ({
-            meetingId: id,
-            team: p.team,
-            name: p.name
-          }))
-        });
+        for (const p of participants) {
+          await tx.participant.create({
+            data: {
+              meetingId: id,
+              team: p.team,
+              name: p.name
+            }
+          });
+        }
       }
 
       // 3. Sync Transcript (Delete and Re-create)
       if (transcript) {
         await tx.transcript.deleteMany({ where: { meetingId: id } });
-        await tx.transcript.createMany({
-          data: transcript.map((t: any) => ({
-            meetingId: id,
-            speaker: t.speaker,
-            text: t.text
-          }))
-        });
+        for (const t of transcript) {
+          await tx.transcript.create({
+            data: {
+              meetingId: id,
+              speaker: t.speaker,
+              text: t.text
+            }
+          });
+        }
       }
 
       // 4. Sync Schedule (Delete and Re-create)
       if (summary?.schedule) {
         await tx.schedule.deleteMany({ where: { meetingId: id } });
-        await tx.schedule.createMany({
-          data: summary.schedule.map((s: any) => ({
-            meetingId: id,
-            task: s.task,
-            assignee: s.assignee,
-            dueDate: s.dueDate
-          }))
-        });
+        for (const s of summary.schedule) {
+          await tx.schedule.create({
+            data: {
+              meetingId: id,
+              task: s.task,
+              assignee: s.assignee,
+              dueDate: s.dueDate
+            }
+          });
+        }
       }
 
       return tx.meeting.findUnique({
@@ -80,9 +88,9 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+): Promise<NextResponse> {
   try {
     const { id } = await params;
     await prisma.meeting.delete({ where: { id } });

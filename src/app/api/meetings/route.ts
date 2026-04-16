@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 
-export async function GET() {
+export const runtime = 'nodejs';
+
+export async function GET(): Promise<NextResponse> {
   try {
-    const meetings = (await prisma.meeting.findMany({
+    const meetings = await prisma.meeting.findMany({
       orderBy: { meetingDate: 'desc' },
       include: {
         participants: true,
         transcript: true,
         schedule: true,
       }
-    } as any)) as any[];
+    });
 
     const formatted = meetings.map(m => ({
       ...m,
@@ -29,7 +31,7 @@ export async function GET() {
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     const body = await req.json();
     
@@ -79,7 +81,7 @@ export async function POST(req: NextRequest) {
         transcript: true,
         schedule: true
       }
-    } as any);
+    });
 
     return NextResponse.json({ success: true, meeting });
   } catch (error: any) {
