@@ -185,6 +185,46 @@ export default function Home() {
     }
   };
 
+  const handleCopyHtml = () => {
+    if (!result) return;
+
+    const { summary } = result;
+    const html = `
+<h3>1. 현황 및 문제점</h3>
+<p>${summary.asis.replace(/\n/g, "<br/>")}</p>
+<h3>2. 개선방향 (목적)</h3>
+<p>${summary.tobe.replace(/\n/g, "<br/>")}</p>
+<h3>3. 기대효과</h3>
+<p>${summary.expected_effects.replace(/\n/g, "<br/>")}</p>
+<h3>4. 일감내용 및 일정</h3>
+<table border="1" style="border-collapse: collapse; width: 100%;">
+  <thead>
+    <tr style="background-color: #f2f2f2;">
+      <th style="padding: 8px; text-align: left;">Task</th>
+      <th style="padding: 8px; text-align: left;">Assignee</th>
+      <th style="padding: 8px; text-align: left;">Due Date</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${summary.schedule.map(item => `
+    <tr>
+      <td style="padding: 8px;">${item.task}</td>
+      <td style="padding: 8px;">${item.assignee}</td>
+      <td style="padding: 8px;">${item.dueDate}</td>
+    </tr>
+    `).join("")}
+  </tbody>
+</table>
+    `.trim();
+
+    navigator.clipboard.writeText(html).then(() => {
+      alert("HTML 형식이 클립보드에 복사되었습니다.");
+    }).catch(err => {
+      console.error("복사 실패:", err);
+      alert("복사 중 오류가 발생했습니다.");
+    });
+  };
+
   return (
     <main className="max-w-6xl mx-auto px-4 py-8 flex flex-col gap-12">
       {/* 1. Intro Section */}
@@ -350,6 +390,13 @@ export default function Home() {
             </div>
             <div className="ml-auto flex items-center gap-3">
               <button
+                onClick={handleCopyHtml}
+                className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white px-6 py-2.5 rounded-xl font-semibold transition-all border border-white/10"
+              >
+                <Download className="w-5 h-5" />
+                HTML로 복사
+              </button>
+              <button
                 onClick={handleSaveToArchive}
                 disabled={isSaving}
                 className="flex items-center gap-2 bg-gradient-to-r from-fuchsia-600 to-cyan-600 hover:from-fuchsia-500 hover:to-cyan-500 text-white px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg"
@@ -408,25 +455,25 @@ export default function Home() {
                 <div className="space-y-8 relative z-10">
                   <div className="group">
                     <h4 className="text-sm font-bold text-fuchsia-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-fuchsia-400"></span> As-Is
+                      <span className="w-2 h-2 rounded-full bg-fuchsia-400"></span> 1. 현황 및 문제점
                     </h4>
                     <div className="p-5 bg-white/5 rounded-2xl border border-white/10"><p className="text-white/90 leading-relaxed font-pre-wrap">{result.summary.asis}</p></div>
                   </div>
                   <div className="group">
                     <h4 className="text-sm font-bold text-cyan-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-cyan-400"></span> To-Be
+                      <span className="w-2 h-2 rounded-full bg-cyan-400"></span> 2. 개선방향 (목적)
                     </h4>
                     <div className="p-5 bg-white/5 rounded-2xl border border-white/10"><p className="text-white/90 leading-relaxed font-pre-wrap">{result.summary.tobe}</p></div>
                   </div>
                   <div className="group">
                     <h4 className="text-sm font-bold text-green-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-green-400"></span> Expected Effects
+                      <span className="w-2 h-2 rounded-full bg-green-400"></span> 3. 기대효과
                     </h4>
                     <div className="p-5 bg-white/5 rounded-2xl border border-white/10"><p className="text-white/90 leading-relaxed font-pre-wrap">{result.summary.expected_effects}</p></div>
                   </div>
                   <div className="mt-12 pt-8 border-t border-white/10">
                     <div className="flex items-center justify-between mb-6">
-                      <h4 className="text-xl font-bold text-white">Timeline & Tasks</h4>
+                      <h4 className="text-xl font-bold text-white">4. 일감내용 및 일정</h4>
                       <button onClick={handleAddSchedule} className="text-sm px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-white font-medium transition-colors">+ Add Row</button>
                     </div>
                     <div className="overflow-hidden rounded-xl border border-white/10">

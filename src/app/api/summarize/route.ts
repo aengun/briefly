@@ -81,9 +81,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
 {
   "summary": {
-    "asis": "현재 상황 요약",
-    "tobe": "목표 및 해결책 요약",
-    "expected_effects": "기대 효과",
+    "asis": "1. 현황 및 문제점: 현재 상황과 직면한 문제들을 상세히 요약",
+    "tobe": "2. 개선방향 (목적): 회의를 통해 도출된 개선 방향과 최종 목적 요약",
+    "expected_effects": "3. 기대효과: 개선안 적용 시 예상되는 긍정적인 효과 요약",
     "schedule": [
       { "task": "할 일", "assignee": "담당자", "dueDate": "기한" }
     ]

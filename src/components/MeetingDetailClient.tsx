@@ -114,11 +114,48 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
     }
   };
 
+  const handleCopyHtml = () => {
+    const html = `
+<h3>1. 현황 및 문제점</h3>
+<p>${meeting.asis.replace(/\n/g, "<br/>")}</p>
+<h3>2. 개선방향 (목적)</h3>
+<p>${meeting.tobe.replace(/\n/g, "<br/>")}</p>
+<h3>3. 기대효과</h3>
+<p>${meeting.expected_effects.replace(/\n/g, "<br/>")}</p>
+<h3>4. 일감내용 및 일정</h3>
+<table border="1" style="border-collapse: collapse; width: 100%;">
+  <thead>
+    <tr style="background-color: #f2f2f2;">
+      <th style="padding: 8px; text-align: left;">Task</th>
+      <th style="padding: 8px; text-align: left;">Assignee</th>
+      <th style="padding: 8px; text-align: left;">Due Date</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${meeting.schedule.map(item => `
+    <tr>
+      <td style="padding: 8px;">${item.task}</td>
+      <td style="padding: 8px;">${item.assignee}</td>
+      <td style="padding: 8px;">${item.dueDate}</td>
+    </tr>
+    `).join("")}
+  </tbody>
+</table>
+    `.trim();
+
+    navigator.clipboard.writeText(html).then(() => {
+      alert("HTML 형식이 클립보드에 복사되었습니다.");
+    }).catch(err => {
+      console.error("복사 실패:", err);
+      alert("복사 중 오류가 발생했습니다.");
+    });
+  };
+
   return (
     <div className="flex flex-col gap-8">
       {/* Header */}
       <div className="bg-white/5 border border-white/10 p-8 rounded-3xl backdrop-blur-xl relative overflow-hidden">
-        <div className="flex justify-between items-start relative z-10">
+        <div className="flex justify-between items-start relative z-10 gap-8">
           <div className="flex-1">
             {isEditMode ? (
               <input
@@ -156,6 +193,15 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
             </div>
           </div>
           <div className="flex gap-3">
+            {!isEditMode && (
+              <button
+                onClick={handleCopyHtml}
+                className="bg-white/10 text-white hover:bg-white/20 px-6 py-2.5 rounded-xl font-semibold transition-all flex items-center gap-2 border border-white/10"
+              >
+                <FileText className="w-5 h-5" />
+                HTML로 복사
+              </button>
+            )}
             <button
               onClick={() => setIsEditMode(!isEditMode)}
               className={`px-6 py-2.5 rounded-xl font-semibold transition-all flex items-center gap-2 ${
@@ -309,7 +355,7 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
             <div className="space-y-8 relative z-10">
               <div className="group">
                 <h4 className="text-sm font-bold text-fuchsia-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-fuchsia-400"></span> As-Is
+                  <span className="w-2 h-2 rounded-full bg-fuchsia-400"></span> 1. 현황 및 문제점
                 </h4>
                 {isEditMode ? (
                   <textarea
@@ -326,7 +372,7 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
 
               <div className="group">
                 <h4 className="text-sm font-bold text-cyan-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-cyan-400"></span> To-Be
+                  <span className="w-2 h-2 rounded-full bg-cyan-400"></span> 2. 개선방향 (목적)
                 </h4>
                 {isEditMode ? (
                   <textarea
@@ -341,10 +387,27 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
                 )}
               </div>
 
+              <div className="group">
+                <h4 className="text-sm font-bold text-green-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-green-400"></span> 3. 기대효과
+                </h4>
+                {isEditMode ? (
+                  <textarea
+                    value={meeting.expected_effects}
+                    onChange={e => setMeeting({ ...meeting, expected_effects: e.target.value })}
+                    className="w-full bg-white/5 border border-white/20 rounded-2xl p-5 text-white outline-none focus:border-green-500/50 min-h-[100px]"
+                  />
+                ) : (
+                  <div className="p-5 bg-white/5 rounded-2xl border border-white/10">
+                    <p className="text-white/90 leading-relaxed font-pre-line">{meeting.expected_effects}</p>
+                  </div>
+                )}
+              </div>
+
               <div className="mt-12 pt-8 border-t border-white/10">
                  <div className="flex items-center justify-between mb-6">
                   <h4 className="text-xl font-bold text-white flex items-center gap-2">
-                    Timeline & Tasks
+                    4. 일감내용 및 일정
                   </h4>
                    {isEditMode && (
                      <button
