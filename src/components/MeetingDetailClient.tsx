@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Calendar, ChevronRight, FileAudio, UsersRound, Save, Loader2, Users, UserPlus, FileText } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -37,11 +37,11 @@ type MeetingData = {
   schedule: ScheduleItem[];
 };
 
-const IT_TEAM_MEMBERS = [
-  { team: "IT팀", name: "강상규 책임" },
-  { team: "IT팀", name: "김건영 선임" },
-  { team: "IT팀", name: "김재윤 선임" },
-];
+type TeamMember = {
+  id: string;
+  team: string;
+  name: string;
+};
 
 export default function MeetingDetailClient({ initialMeeting }: { initialMeeting: MeetingData }) {
   const router = useRouter();
@@ -55,6 +55,18 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
 
   // For Speaker Mapping in Edit Mode
   const [speakerMap, setSpeakerMap] = useState<Record<string, string>>({});
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+
+  useEffect(() => {
+    fetch("/api/team-members")
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setTeamMembers(data);
+        }
+      })
+      .catch(err => console.error("Failed to fetch team members:", err));
+  }, []);
 
   const handleAddParticipant = () => {
     if (!newTeam || !newName) return;
@@ -237,8 +249,8 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
                 className="bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-cyan-400 transition-colors"
               >
                 <option value="" disabled className="text-gray-900">IT 팀원 추가</option>
-                {IT_TEAM_MEMBERS.map(m => (
-                  <option key={m.name} value={`${m.team}:${m.name}`} className="text-gray-900">
+                {teamMembers.map(m => (
+                  <option key={m.id} value={`${m.team}:${m.name}`} className="text-gray-900">
                     {m.team} {m.name}
                   </option>
                 ))}

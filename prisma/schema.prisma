@@ -45,3 +45,8 @@ model Schedule {
   meetingId String
   meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 }
+model TeamMember {
+  id   String @id @default(uuid())
+  team String @default("IT팀")
+  name String
+}

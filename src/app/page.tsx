@@ -33,11 +33,11 @@ export type Participant = {
   name: string;
 };
 
-const IT_TEAM_MEMBERS = [
-  { team: "IT팀", name: "강상규 책임" },
-  { team: "IT팀", name: "김건영 선임" },
-  { team: "IT팀", name: "김재윤 선임" },
-];
+type TeamMember = {
+  id: string;
+  team: string;
+  name: string;
+};
 
 export default function Home() {
   const router = useRouter();
@@ -58,12 +58,23 @@ export default function Home() {
   const [isSaving, setIsSaving] = useState(false);
   const [meetingTitle, setMeetingTitle] = useState("");
   const [meetingDate, setMeetingDate] = useState("");
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Prevent Hydration mismatch by setting initial date on client only
   useEffect(() => {
     setMeetingDate(new Date().toISOString().split('T')[0]);
+    
+    // Fetch team members from DB
+    fetch("/api/team-members")
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setTeamMembers(data);
+        }
+      })
+      .catch(err => console.error("Failed to fetch team members:", err));
   }, []);
 
   const handleAddParticipant = () => {
@@ -253,8 +264,8 @@ export default function Home() {
             className="bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-cyan-400 transition-colors"
           >
             <option value="" disabled className="text-gray-900">IT 팀원 선택 (필수참여)</option>
-            {IT_TEAM_MEMBERS.map(m => (
-              <option key={m.name} value={`${m.team}:${m.name}`} className="text-gray-900">
+            {teamMembers.map(m => (
+              <option key={m.id} value={`${m.team}:${m.name}`} className="text-gray-900">
                 {m.team} {m.name}
               </option>
             ))}
