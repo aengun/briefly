@@ -13,22 +13,23 @@
 
 ## ✨ 핵심 기능 (Core Features)
 
-### 1. 🤖 지능형 AI 분석 파이프라인
+### 1. 🤖 지능형 AI 분석 및 가독성 최적화
 - **Gemini 1.5 Flash**: 빠르고 정확한 음성 텍스트 변환(STT) 및 문맥 기반 요약을 지원합니다.
-- **Robust JSON Extraction**: AI 응답의 불안정성을 극복하는 독자적인 파싱 로직으로 안정적인 데이터 추출을 보장합니다.
+- **구조화된 요약**: 불필요한 번호를 제거하고 포인트별 **리스트 형식(ul/li)**으로 요약 내용을 생성하여 가독성을 극대화했습니다.
+- **Robust JSON Extraction**: AI 응답의 불안정성을 극복하는 파싱 로직으로 안정적인 데이터 추출을 보장합니다.
 
-### 2. 👥 정밀한 참여자 및 화자 관리
-- **실시간 참여자 등록**: 회의 분석 전후로 참여자를 자유롭게 추가/제거할 수 있습니다.
-- **화자 매핑 (Speaker Mapping)**: AI가 구분한 익명의 화자(A, B, C...)를 실제 참여자 이름과 매핑하여 대화 내역의 가독성을 높입니다.
+### 2. 🟦 Confluence 원클릭 연동 (New!)
+- **자동 페이지 생성**: 요약된 보고서를 클릭 한 번으로 Confluence에 직접 전송하여 저장할 수 있습니다.
+- **계층 구조 지원**: 특정 상위 페이지 ID를 설정하여 원하는 폴더(부모 페이지) 하위에 자동으로 회의록을 분류할 수 있습니다.
+- **서식 보존**: 표(Table)와 리스트 구조가 유지된 상태로 Confluence에 최적화된 서식으로 전송됩니다.
 
-### 3. 📝 사후 편집 및 영구 보관 (Persistence)
-- **전방위 편집 모드**: 생성된 요약 내용(As-Is, To-Be, 기대효과)과 대화 내역, 일정 테이블을 언제든 수정할 수 있습니다.
-- **Prisma & SQLite**: 분석된 모든 데이터는 로컬 데이터베이스에 영구 저장되어 유실 걱정이 없습니다.
-- **회의 날짜 관리**: 자동 생성된 날짜 외에 실제 회의가 진행된 날짜를 수동으로 지정하여 아카이브를 관리할 수 있습니다.
+### 3. 👥 스마트 팀원 및 화자 관리
+- **IT 팀원 데이터베이스**: 자주 회의에 참여하는 팀원 정보를 미리 등록하고 원클릭으로 참여자를 추가할 수 있습니다.
+- **화자 매핑 (Speaker Mapping)**: AI가 구분한 익명의 화자(A, B, C...)를 실제 참여자 이름과 일괄 매핑하여 대화 내역을 정교하게 관리합니다.
 
-### 4. 🗄️ 고도화된 아카이브 (Archives)
-- **스마트 정렬**: 등록된 '회의 날짜(Meeting Date)' 순으로 과거 기록을 편리하게 조회할 수 있습니다.
-- **딥 다이브 뷰**: 보관된 기록을 클릭하여 당시의 대화 원본과 요약본, 오디오 파일을 다시 확인할 수 있습니다.
+### 4. 📝 사후 편집 및 영구 보관 (Persistence)
+- **전방위 편집 모드**: 생성된 요약 내용, 대화 내역, 일정 테이블을 자유롭게 수정하고 실시간으로 저장할 수 있습니다.
+- **Prisma & SQLite**: 모든 데이터는 로컬 DB에 안전하게 보관되며, `npx prisma studio`를 통해 시각적으로 관리 가능합니다.
 
 ---
 
@@ -36,9 +37,10 @@
 
 - **Frontend**: Next.js 15 (App Router), React 19, Lucide Icons
 - **Styling**: Tailwind CSS v4 (Modern Dark Theme & Glassmorphism)
-- **Backend**: Next.js API Routes (Serverless Functions)
+- **Backend**: Next.js API Routes (Node.js Runtime)
 - **Database**: SQLite with **Prisma ORM**
 - **AI Engine**: Google Generative AI (Gemini 1.5 Flash)
+- **Integrations**: Atlassian Confluence REST API
 
 ---
 
@@ -47,11 +49,18 @@
 ### 1. 환경 변수 설정
 `.env` 파일을 생성하고 아래 정보를 입력하세요.
 ```env
-# Google AI Studio에서 발급받은 API 키
+# Google Gemini API Key
 GEMINI_API_KEY=your_gemini_api_key_here
 
-# SQLite DB 경로 (기본값)
-DATABASE_URL="file:./prisma/dev.db"
+# SQLite DB Path
+DATABASE_URL="file:./dev.db"
+
+# Confluence Integration (Optional)
+CONFLUENCE_DOMAIN="your-company.atlassian.net"
+CONFLUENCE_EMAIL="your-email@example.com"
+CONFLUENCE_API_TOKEN="your-api-token"
+CONFLUENCE_SPACE_KEY="SPACE_KEY"
+CONFLUENCE_PARENT_PAGE_ID="12345678" # (선택) 상위 폴더 페이지 ID
 ```
 
 ### 2. 설치 및 DB 설정
@@ -68,12 +77,12 @@ npx prisma generate
 ```bash
 npm run dev
 ```
-이제 [http://localhost:3000](http://localhost:3000)에서 실시간으로 서비스를 확인하실 수 있습니다.
 
 ---
 
-## 💡 사용 팁 (Usage Tips)
+## 💡 주요 사용법 (How to Use)
 
-- **분석 전 참여자 등록**: 분석을 시작하기 전에 참여자를 미리 등록해두면, 분석 결과 화면에서 화자 매핑을 더 쉽고 빠르게 할 수 있습니다.
-- **보관소 편집**: 저장된 데이터가 마음에 들지 않는다면, 보관소 상세 페이지의 **'편집 모드'**를 통해 언제든 내용을 수정하고 업데이트할 수 있습니다.
-- **DB 확인**: 저장된 원본 데이터를 직접 확인하고 싶다면 `npx prisma studio`를 실행하여 브라우저에서 DB를 관리할 수 있습니다.
+- **Confluence 전송**: 회의 상세 페이지 상단의 'Confluence로 전송' 버튼을 클릭하세요. 전송 완료 후 생성된 페이지로 바로 이동할 수 있습니다.
+- **HTML 복사**: 외부 문서 작성을 위해 요약 내용을 HTML 태그가 포함된 소스 그대로 복사할 수 있습니다.
+- **팀원 자동 완성**: IT 팀원 목록에서 선택하여 참여자를 빠르게 등록하고 화자 매핑에 활용하세요.
+- **Git 관리**: 개인정보 및 보안을 위해 `public/uploads` 폴더의 음성 파일은 기본적으로 Git 추적에서 제외됩니다.
