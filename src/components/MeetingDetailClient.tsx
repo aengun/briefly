@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Calendar, ChevronRight, FileAudio, UsersRound, Save, Loader2, Users, UserPlus, FileText } from "lucide-react";
+import { Calendar, ChevronRight, FileAudio, UsersRound, Save, Loader2, Users, UserPlus, FileText, Share2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 type Participant = {
@@ -47,6 +47,7 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
   const router = useRouter();
   const [meeting, setMeeting] = useState(initialMeeting);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSendingToConfluence, setIsSendingToConfluence] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
 
   // For participant management
@@ -126,14 +127,18 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
     }
   };
 
+  const renderAsList = (text: string) => {
+    return text.split("\n").filter(line => line.trim()).map(line => `<li>${line.trim()}</li>`).join("");
+  };
+
   const handleCopyHtml = () => {
     const html = `
 <h3>1. 현황 및 문제점</h3>
-<p>${meeting.asis.replace(/\n/g, "<br/>")}</p>
+<ul>${renderAsList(meeting.asis)}</ul>
 <h3>2. 개선방향 (목적)</h3>
-<p>${meeting.tobe.replace(/\n/g, "<br/>")}</p>
+<ul>${renderAsList(meeting.tobe)}</ul>
 <h3>3. 기대효과</h3>
-<p>${meeting.expected_effects.replace(/\n/g, "<br/>")}</p>
+<ul>${renderAsList(meeting.expected_effects)}</ul>
 <h3>4. 일감내용 및 일정</h3>
 <table border="1" style="border-collapse: collapse; width: 100%;">
   <thead>
@@ -161,6 +166,64 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
       console.error("복사 실패:", err);
       alert("복사 중 오류가 발생했습니다.");
     });
+  };
+
+  const handleSendToConfluence = async () => {
+    if (!confirm("이 내용을 Confluence로 전송하여 새 페이지로 저장하시겠습니까?")) return;
+
+    setIsSendingToConfluence(true);
+    try {
+      const html = `
+<h3>1. 현황 및 문제점</h3>
+<ul>${renderAsList(meeting.asis)}</ul>
+<h3>2. 개선방향 (목적)</h3>
+<ul>${renderAsList(meeting.tobe)}</ul>
+<h3>3. 기대효과</h3>
+<ul>${renderAsList(meeting.expected_effects)}</ul>
+<h3>4. 일감내용 및 일정</h3>
+<table border="1" style="border-collapse: collapse; width: 100%;">
+  <thead>
+    <tr style="background-color: #f2f2f2;">
+      <th style="padding: 8px; text-align: left;">Task</th>
+      <th style="padding: 8px; text-align: left;">Assignee</th>
+      <th style="padding: 8px; text-align: left;">Due Date</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${meeting.schedule.map(item => `
+    <tr>
+      <td style="padding: 8px;">${item.task}</td>
+      <td style="padding: 8px;">${item.assignee}</td>
+      <td style="padding: 8px;">${item.dueDate}</td>
+    </tr>
+    `).join("")}
+  </tbody>
+</table>
+      `.trim();
+
+      const res = await fetch("/api/confluence", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `[회의록] ${meeting.title}`,
+          html: html
+        })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Confluence 전송 실패");
+      }
+
+      if (confirm("Confluence 페이지가 성공적으로 생성되었습니다. 페이지를 확인하시겠습니까?")) {
+        window.open(data.url, "_blank");
+      }
+    } catch (err: any) {
+      alert("오류 발생: " + err.message);
+    } finally {
+      setIsSendingToConfluence(false);
+    }
   };
 
   return (
@@ -206,13 +269,27 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
           </div>
           <div className="flex gap-3">
             {!isEditMode && (
-              <button
-                onClick={handleCopyHtml}
-                className="bg-white/10 text-white hover:bg-white/20 px-6 py-2.5 rounded-xl font-semibold transition-all flex items-center gap-2 border border-white/10"
-              >
-                <FileText className="w-5 h-5" />
-                HTML로 복사
-              </button>
+              <>
+                <button
+                  onClick={handleCopyHtml}
+                  className="bg-white/10 text-white hover:bg-white/20 px-6 py-2.5 rounded-xl font-semibold transition-all flex items-center gap-2 border border-white/10"
+                >
+                  <FileText className="w-5 h-5" />
+                  HTML로 복사
+                </button>
+                <button
+                  onClick={handleSendToConfluence}
+                  disabled={isSendingToConfluence}
+                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg flex items-center gap-2 disabled:opacity-50"
+                >
+                  {isSendingToConfluence ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <Share2 className="w-5 h-5" />
+                  )}
+                  Confluence로 전송
+                </button>
+              </>
             )}
             <button
               onClick={() => setIsEditMode(!isEditMode)}
@@ -377,7 +454,11 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
                   />
                 ) : (
                   <div className="p-5 bg-white/5 rounded-2xl border border-white/10">
-                    <p className="text-white/90 leading-relaxed font-pre-line">{meeting.asis}</p>
+                    <ul className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
+                      {meeting.asis.split("\n").filter(line => line.trim()).map((line, i) => (
+                        <li key={i}>{line.trim()}</li>
+                      ))}
+                    </ul>
                   </div>
                 )}
               </div>
@@ -394,7 +475,11 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
                   />
                 ) : (
                   <div className="p-5 bg-white/5 rounded-2xl border border-white/10">
-                    <p className="text-white/90 leading-relaxed font-pre-line">{meeting.tobe}</p>
+                    <ul className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
+                      {meeting.tobe.split("\n").filter(line => line.trim()).map((line, i) => (
+                        <li key={i}>{line.trim()}</li>
+                      ))}
+                    </ul>
                   </div>
                 )}
               </div>
@@ -411,7 +496,11 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
                   />
                 ) : (
                   <div className="p-5 bg-white/5 rounded-2xl border border-white/10">
-                    <p className="text-white/90 leading-relaxed font-pre-line">{meeting.expected_effects}</p>
+                    <ul className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
+                      {meeting.expected_effects.split("\n").filter(line => line.trim()).map((line, i) => (
+                        <li key={i}>{line.trim()}</li>
+                      ))}
+                    </ul>
                   </div>
                 )}
               </div>

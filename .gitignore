@@ -49,3 +49,6 @@ next-env.d.ts
 # database
 prisma/*.db
 prisma/*.db-journal
+
+# Audio Uploads
+public/uploads/*
