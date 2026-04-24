@@ -5,7 +5,6 @@ export const runtime = 'nodejs';
 
 export async function GET(): Promise<NextResponse> {
   try {
-    // @ts-ignore
     const members = await prisma.teamMember.findMany({
       orderBy: { name: 'asc' }
     });
@@ -26,7 +25,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Missing team or name' }, { status: 400 });
     }
     
-    // @ts-ignore
     const member = await prisma.teamMember.create({
       data: { team, name }
     });
@@ -46,7 +44,6 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Missing id' }, { status: 400 });
     }
     
-    // @ts-ignore
     await prisma.teamMember.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (error: any) {
