@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { UploadCloud, FileAudio, Loader2, CheckCircle2, ChevronRight, Download, Users, UserPlus, Save, Calendar as CalendarIcon } from "lucide-react";
+import { UploadCloud, FileAudio, Loader2, CheckCircle2, ChevronRight, Download, Users, UserPlus, Save, Mic, MicOff, Square, Play, RefreshCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 // Define the interfaces based on our DB types
@@ -51,6 +51,7 @@ export default function Home() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [newTeam, setNewTeam] = useState("");
   const [newName, setNewName] = useState("");
+  const [autoAddParticipants, setAutoAddParticipants] = useState(true);
 
   // Diarization Mapping
   const [speakerMap, setSpeakerMap] = useState<Record<string, string>>({});
@@ -60,7 +61,67 @@ export default function Home() {
   const [meetingDate, setMeetingDate] = useState("");
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
 
+  // Recording state
+  const [activeTab, setActiveTab] = useState<"upload" | "record">("upload");
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioLevels, setAudioLevels] = useState<number[]>(Array(12).fill(0));
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<BlobEvent["data"][]>([]);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recordedFileRef = useRef<File | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 재분석(Re-analyze) 감지 로직
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const meetingId = params.get("reanalyze");
+    
+    if (meetingId) {
+      const loadAndAnalyze = async () => {
+        setIsUploading(true);
+        try {
+          // 1. 회의 정보 조회
+          const res = await fetch(`/api/meetings/${meetingId}`);
+          if (!res.ok) throw new Error("회의 정보를 불러오지 못했습니다.");
+          const meeting = await res.json();
+          
+          if (!meeting.audioUrl) throw new Error("오디오 파일 경로가 없습니다.");
+          
+          // 2. 오디오 파일 페치 및 파일 객체화
+          const audioRes = await fetch(meeting.audioUrl);
+          const blob = await audioRes.blob();
+          const fileName = meeting.audioUrl.split("/").pop() || "reanalysis.mp3";
+          const reanalysisFile = new File([blob], fileName, { type: blob.type });
+          
+          // 3. 기존 참여자 정보가 있다면 세팅 (선택사항)
+          if (meeting.participants && meeting.participants.length > 0) {
+            setParticipants(meeting.participants.map((p: any) => ({
+              id: p.id || crypto.randomUUID(),
+              team: p.team,
+              name: p.name
+            })));
+          }
+
+          setFile(reanalysisFile);
+          // 4. 분석 시작
+          handleUpload(reanalysisFile);
+          
+          // URL 파라미터 정리 (무한 루프 방지)
+          window.history.replaceState({}, document.title, "/");
+        } catch (err: any) {
+          setError(`재분석 실패: ${err.message}`);
+          setIsUploading(false);
+        }
+      };
+      loadAndAnalyze();
+    }
+  }, []);
 
   // Prevent Hydration mismatch by setting initial date on client only
   useEffect(() => {
@@ -76,6 +137,109 @@ export default function Home() {
       })
       .catch(err => console.error("Failed to fetch team members:", err));
   }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+    };
+  }, [audioUrl]);
+
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60).toString().padStart(2, "0");
+    const s = (seconds % 60).toString().padStart(2, "0");
+    return `${m}:${s}`;
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      // Web Audio API - 음파 시각화
+      const audioCtx = new AudioContext();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      analyserRef.current = analyser;
+
+      const updateLevels = () => {
+        if (!analyserRef.current) return;
+        const data = new Uint8Array(analyserRef.current.frequencyBinCount);
+        analyserRef.current.getByteFrequencyData(data);
+        const bands = 12;
+        const binSize = Math.floor(data.length / bands);
+        // 고주파수 영역도 더 잘 보이도록 로그 스케일에 가깝게 매핑 조정
+        const levels = Array.from({ length: bands }, (_, i) => {
+          const start = Math.floor(Math.pow(i / bands, 1.5) * data.length);
+          const end = Math.floor(Math.pow((i + 1) / bands, 1.5) * data.length);
+          const slice = data.slice(start, Math.max(end, start + 1));
+          const avg = slice.reduce((a, b) => a + b, 0) / slice.length;
+          return avg / 255;
+        });
+        setAudioLevels(levels);
+        animationFrameRef.current = requestAnimationFrame(updateLevels);
+      };
+      updateLevels();
+
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      chunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        // 애니메이션 중지
+        if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+        setAudioLevels(Array(12).fill(0));
+
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        setRecordedBlob(blob);
+        const url = URL.createObjectURL(blob);
+        setAudioUrl(url);
+        // ref에 즉시 저장 (state 업데이트 지연 방지)
+        const recordedFile = new File([blob], `recording_${Date.now()}.webm`, { type: "audio/webm" });
+        recordedFileRef.current = recordedFile;
+        setFile(recordedFile);
+        setResult(null);
+        setError(null);
+        stream.getTracks().forEach(track => track.stop());
+        audioCtx.close();
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingTime(0);
+      setRecordedBlob(null);
+      setAudioUrl(null);
+      recordedFileRef.current = null;
+      timerRef.current = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+    } catch {
+      setError("마이크 접근 권한이 필요합니다. 브라우저 설정에서 허용해주세요.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (timerRef.current) clearInterval(timerRef.current);
+    }
+  };
+
+  const resetRecording = () => {
+    setRecordedBlob(null);
+    setAudioUrl(null);
+    setFile(null);
+    setRecordingTime(0);
+    setError(null);
+  };
 
   const handleAddParticipant = () => {
     if (!newTeam || !newName) return;
@@ -111,17 +275,15 @@ export default function Home() {
     }
   };
 
-  const handleUpload = async () => {
-    if (!file) return;
-    if (participants.length === 0) {
-      if (!confirm("참여자가 없습니다. 계속하시겠습니까?")) return;
-    }
+  const handleUpload = async (fileOverride?: File) => {
+    const targetFile = fileOverride ?? file;
+    if (!targetFile) return;
 
     setIsUploading(true);
     setError(null);
 
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", targetFile);
 
     try {
       const response = await fetch("/api/summarize", {
@@ -133,8 +295,12 @@ export default function Home() {
 
       const data = await response.json();
       setResult(data);
-      setMeetingTitle(file.name.replace(/\.[^/.]+$/, ""));
+      setMeetingTitle(targetFile.name.replace(/\.[^/.]+$/, ""));
 
+      if (data.usedModel) {
+        console.log(`Used AI Model: ${data.usedModel}`);
+      }
+      
       const initialMap: Record<string, string> = {};
       if (Array.isArray(data.transcript)) {
         data.transcript.forEach((u: TranscriptUtterance) => {
@@ -142,8 +308,35 @@ export default function Home() {
         });
       }
       setSpeakerMap(initialMap);
+
+      // 자동 참여자 추가: transcript 화자 → participants
+      if (autoAddParticipants && Array.isArray(data.transcript)) {
+        const uniqueSpeakers = [...new Set(
+          data.transcript.map((u: TranscriptUtterance) => u.speaker)
+        )] as string[];
+        
+        setParticipants(prev => {
+          const existingNames = new Set(prev.map(p => p.name));
+          const newOnes = uniqueSpeakers
+            .filter(speaker => !existingNames.has(speaker))
+            .map(speaker => ({
+              id: crypto.randomUUID(),
+              team: "미지정",
+              name: speaker
+            }));
+          return [...prev, ...newOnes];
+        });
+      }
     } catch (err: any) {
-      setError(err.message || "알 수 없는 오류가 발생했습니다.");
+      let friendlyError = "분석 중 알 수 없는 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
+      if (err.message.includes("429")) {
+        friendlyError = "현재 AI 사용량이 많아 잠시 후 다시 시도해 주세요. (할당량 초과)";
+      } else if (err.message.includes("503") || err.message.includes("Service Unavailable")) {
+        friendlyError = "AI 서버가 일시적으로 바쁩니다. 약 1분 후 다시 시도해 주세요.";
+      } else if (err.message.includes("403")) {
+        friendlyError = "API 권한 오류가 발생했습니다. 키 설정을 확인해 주세요.";
+      }
+      setError(friendlyError);
     } finally {
       setIsUploading(false);
     }
@@ -253,15 +446,42 @@ export default function Home() {
 
       {/* 2. Participant Management (Shared) */}
       <section className="w-full max-w-3xl mx-auto bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-xl shadow-2xl">
-        <h3 className="text-xl font-bold flex items-center gap-2 mb-4 text-white">
-          <Users className="w-5 h-5 text-cyan-400" />
-          회의 참여자 관리
-        </h3>
-        <div className="flex gap-4 mb-4">
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-bold flex items-center gap-2 text-white">
+            <Users className="w-5 h-5 text-cyan-400" />
+            회의 참여자 관리
+          </h3>
+          {/* 자동 참여자 추가 슬라이드 토글 */}
+          <label className="flex items-center gap-3 cursor-pointer select-none group">
+            <span className={`text-sm font-medium transition-colors duration-200 ${
+              autoAddParticipants ? "text-cyan-300" : "text-white/30"
+            }`}>
+              AI 자동인식
+            </span>
+            <button
+              role="switch"
+              aria-checked={autoAddParticipants}
+              onClick={() => setAutoAddParticipants(prev => !prev)}
+              className={`relative w-11 h-6 rounded-full transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-cyan-400/50 ${
+                autoAddParticipants
+                  ? "bg-cyan-500"
+                  : "bg-white/15"
+              }`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-all duration-300 ${
+                autoAddParticipants ? "translate-x-5" : "translate-x-0"
+              }`} />
+            </button>
+          </label>
+        </div>
+        <div className="flex flex-wrap md:flex-nowrap gap-4 mb-4">
           <select
             onChange={handleAddITMember}
             defaultValue=""
-            className="bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-cyan-400 transition-colors"
+            disabled={autoAddParticipants}
+            className={`bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-cyan-400 transition-colors w-full md:w-auto min-w-[200px] ${
+              autoAddParticipants ? "opacity-50 cursor-not-allowed" : ""
+            }`}
           >
             <option value="" disabled className="text-gray-900">IT 팀원 선택 (필수참여)</option>
             {teamMembers.map(m => (
@@ -271,24 +491,33 @@ export default function Home() {
             ))}
           </select>
 
-          <div className="flex gap-2 flex-1">
+          <div className="flex gap-2 flex-1 w-full min-w-0">
             <input
               type="text"
               placeholder="팀명"
               value={newTeam}
               onChange={e => setNewTeam(e.target.value)}
-              className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-fuchsia-400 transition-colors"
+              disabled={autoAddParticipants}
+              className={`flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-fuchsia-400 transition-colors min-w-0 ${
+                autoAddParticipants ? "opacity-50 cursor-not-allowed" : ""
+              }`}
             />
             <input
               type="text"
               placeholder="이름/직급"
               value={newName}
               onChange={e => setNewName(e.target.value)}
-              className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-fuchsia-400 transition-colors"
+              disabled={autoAddParticipants}
+              className={`flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-fuchsia-400 transition-colors min-w-0 ${
+                autoAddParticipants ? "opacity-50 cursor-not-allowed" : ""
+              }`}
             />
             <button
               onClick={handleAddParticipant}
-              className="bg-white/20 hover:bg-white/30 text-white px-4 py-3 rounded-xl transition-colors flex items-center justify-center"
+              disabled={autoAddParticipants}
+              className={`bg-white/20 hover:bg-white/30 text-white px-4 py-3 rounded-xl transition-colors flex items-center justify-center shrink-0 ${
+                autoAddParticipants ? "opacity-50 cursor-not-allowed" : ""
+              }`}
             >
               <UserPlus className="w-5 h-5" />
             </button>
@@ -313,59 +542,192 @@ export default function Home() {
         )}
       </section>
 
-      {/* 3. Upload Section */}
+      {/* 3. Upload / Record Section */}
       {!result && (
         <section className="w-full max-w-3xl mx-auto flex flex-col gap-6">
-          <div
-            className={`relative overflow-hidden rounded-3xl border-2 border-dashed transition-all duration-300 ${
-              isUploading ? "border-purple-500/50 bg-purple-900/20" : "border-white/20 bg-white/5 hover:bg-white/10 hover:border-white/30 cursor-pointer"
-            }`}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={handleDrop}
-            onClick={() => !isUploading && fileInputRef.current?.click()}
-          >
-            <div className="p-12 flex flex-col items-center justify-center text-center space-y-4">
-              {isUploading ? (
-                <>
-                  <div className="relative">
-                    <Loader2 className="w-16 h-16 text-fuchsia-400 animate-spin" />
-                    <div className="absolute inset-0 blur-xl bg-fuchsia-500/30 rounded-full animate-pulse" />
-                  </div>
-                  <h3 className="text-xl font-semibold text-white">AI가 회의를 분석하고 있습니다...</h3>
-                  <p className="text-purple-300/80 text-sm">참석자 식별 및 문맥 요약 중입니다. 잠시만 기다려주세요.</p>
-                </>
-              ) : file ? (
-                <>
-                  <div className="bg-green-500/20 p-4 rounded-full ring-1 ring-green-500/50 mb-2">
-                    <CheckCircle2 className="w-10 h-10 text-green-400" />
-                  </div>
-                  <h3 className="text-xl font-semibold text-white truncate max-w-[250px]">{file.name}</h3>
-                  <p className="text-purple-300/80 text-sm">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleUpload(); }}
-                    className="mt-6 bg-gradient-to-r from-fuchsia-600 to-cyan-600 hover:from-fuchsia-500 hover:to-cyan-500 text-white px-8 py-3 rounded-full font-semibold transition-all shadow-lg transform hover:-translate-y-0.5"
-                  >
-                    분석 및 요약 시작하기
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setFile(null); }}
-                    className="text-sm text-purple-300 hover:text-white mt-4 underline underline-offset-4 transition-colors"
-                  >
-                    다른 파일 선택
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div className="bg-white/10 p-5 rounded-full ring-1 ring-white/20 mb-2 group-hover:scale-110 transition-transform duration-300">
-                    <FileAudio className="w-10 h-10 text-cyan-300" />
-                  </div>
-                  <h3 className="text-xl font-semibold text-white">오디오 파일 업로드 (또는 드래그 앤 드롭)</h3>
-                  <p className="text-purple-300/80 text-sm">MP3, WAV, M4A 등 지원</p>
-                </>
-              )}
-            </div>
-            <input type="file" accept="audio/*" className="hidden" ref={fileInputRef} onChange={handleFileChange} disabled={isUploading} />
+          {/* Tab Switcher */}
+          <div className="flex bg-white/5 border border-white/10 rounded-2xl p-1.5 gap-1">
+            <button
+              onClick={() => setActiveTab("upload")}
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold text-sm transition-all duration-300 ${
+                activeTab === "upload"
+                  ? "bg-gradient-to-r from-fuchsia-600 to-cyan-600 text-white shadow-lg"
+                  : "text-white/50 hover:text-white hover:bg-white/5"
+              }`}
+            >
+              <UploadCloud className="w-4 h-4" />
+              파일 업로드
+            </button>
+            <button
+              onClick={() => setActiveTab("record")}
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold text-sm transition-all duration-300 ${
+                activeTab === "record"
+                  ? "bg-gradient-to-r from-rose-600 to-orange-500 text-white shadow-lg"
+                  : "text-white/50 hover:text-white hover:bg-white/5"
+              }`}
+            >
+              <Mic className="w-4 h-4" />
+              직접 녹음
+            </button>
           </div>
+
+          {/* Upload Tab */}
+          {activeTab === "upload" && (
+            <div
+              className={`relative overflow-hidden rounded-3xl border-2 border-dashed transition-all duration-300 ${
+                isUploading ? "border-purple-500/50 bg-purple-900/20" : "border-white/20 bg-white/5 hover:bg-white/10 hover:border-white/30 cursor-pointer"
+              }`}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={handleDrop}
+              onClick={() => !isUploading && fileInputRef.current?.click()}
+            >
+              <div className="p-12 flex flex-col items-center justify-center text-center space-y-4">
+                {isUploading ? (
+                  <>
+                    <div className="relative">
+                      <Loader2 className="w-16 h-16 text-fuchsia-400 animate-spin" />
+                      <div className="absolute inset-0 blur-xl bg-fuchsia-500/30 rounded-full animate-pulse" />
+                    </div>
+                    <h3 className="text-xl font-semibold text-white">AI가 회의를 분석하고 있습니다...</h3>
+                    <p className="text-purple-300/80 text-sm">참석자 식별 및 문맥 요약 중입니다. 잠시만 기다려주세요.</p>
+                  </>
+                ) : file && activeTab === "upload" ? (
+                  <>
+                    <div className="bg-green-500/20 p-4 rounded-full ring-1 ring-green-500/50 mb-2">
+                      <CheckCircle2 className="w-10 h-10 text-green-400" />
+                    </div>
+                    <h3 className="text-xl font-semibold text-white truncate max-w-[250px]">{file.name}</h3>
+                    <p className="text-purple-300/80 text-sm">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleUpload(); }}
+                      className="mt-6 bg-gradient-to-r from-fuchsia-600 to-cyan-600 hover:from-fuchsia-500 hover:to-cyan-500 text-white px-8 py-3 rounded-full font-semibold transition-all shadow-lg transform hover:-translate-y-0.5"
+                    >
+                      분석 및 요약 시작하기
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setFile(null); }}
+                      className="text-sm text-purple-300 hover:text-white mt-4 underline underline-offset-4 transition-colors"
+                    >
+                      다른 파일 선택
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="bg-white/10 p-5 rounded-full ring-1 ring-white/20 mb-2">
+                      <FileAudio className="w-10 h-10 text-cyan-300" />
+                    </div>
+                    <h3 className="text-xl font-semibold text-white">오디오 파일 업로드 (또는 드래그 앤 드롭)</h3>
+                    <p className="text-purple-300/80 text-sm">MP3, WAV, M4A 등 지원</p>
+                  </>
+                )}
+              </div>
+              <input type="file" accept="audio/*" className="hidden" ref={fileInputRef} onChange={handleFileChange} disabled={isUploading} />
+            </div>
+          )}
+
+          {/* Record Tab */}
+          {activeTab === "record" && (
+            <div className="relative overflow-hidden rounded-3xl border-2 border-dashed border-white/20 bg-white/5 transition-all duration-300">
+              <div className="p-12 flex flex-col items-center justify-center text-center space-y-6">
+                {isUploading ? (
+                  <>
+                    <div className="relative">
+                      <Loader2 className="w-16 h-16 text-cyan-400 animate-spin" />
+                      <div className="absolute inset-0 blur-xl bg-cyan-500/30 rounded-full animate-pulse" />
+                    </div>
+                    <h3 className="text-xl font-semibold text-white">AI가 회의를 분석하고 있습니다...</h3>
+                    <div className="flex flex-col items-center gap-1">
+                      <p className="text-cyan-300/80 text-sm italic animate-pulse">최적의 모델을 찾아 분석을 진행 중입니다...</p>
+                      <p className="text-white/40 text-[11px] mt-2 font-medium bg-white/5 px-3 py-1 rounded-full border border-white/10">
+                        파일 크기에 따라 10초 ~ 40초 정도 소요됩니다
+                      </p>
+                    </div>
+                  </>
+                ) : recordedBlob && audioUrl ? (
+                  // 녹음 완료 상태
+                  <>
+                    <div className="bg-green-500/20 p-4 rounded-full ring-1 ring-green-500/50">
+                      <CheckCircle2 className="w-10 h-10 text-green-400" />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-xl font-semibold text-white">녹음 완료!</h3>
+                      <p className="text-purple-300/80 text-sm">총 녹음 시간: {formatTime(recordingTime)}</p>
+                    </div>
+                    <audio controls src={audioUrl} className="w-full max-w-sm rounded-xl" />
+                    <div className="flex gap-3 mt-2">
+                      <button
+                        onClick={() => handleUpload(recordedFileRef.current ?? undefined)}
+                        className="flex items-center gap-2 bg-gradient-to-r from-fuchsia-600 to-cyan-600 hover:from-fuchsia-500 hover:to-cyan-500 text-white px-8 py-3 rounded-full font-semibold transition-all shadow-lg transform hover:-translate-y-0.5"
+                      >
+                        <Play className="w-4 h-4" />
+                        분석 및 요약 시작하기
+                      </button>
+                      <button
+                        onClick={resetRecording}
+                        className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white px-6 py-3 rounded-full font-semibold transition-all"
+                      >
+                        <MicOff className="w-4 h-4" />
+                        다시 녹음
+                      </button>
+                    </div>
+                  </>
+                ) : isRecording ? (
+                  // 녹음 중 상태
+                  <>
+                    {/* 음파 시각화 */}
+                    <div className="flex items-end justify-center gap-1 h-16 w-48">
+                      {audioLevels.map((level, i) => (
+                        <div
+                          key={i}
+                          className="flex-1 rounded-full bg-gradient-to-t from-rose-600 to-orange-400 transition-all duration-75"
+                          style={{
+                            height: `${Math.max(6, level * 64)}px`,
+                            opacity: Math.max(0.3, level + 0.3),
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <div className="relative flex items-center justify-center">
+                      <div className="w-20 h-20 rounded-full bg-rose-500/20 ring-2 ring-rose-500/50 flex items-center justify-center">
+                        <Mic className="w-10 h-10 text-rose-400" />
+                      </div>
+                      <div className="absolute inset-0 rounded-full bg-rose-500/10 animate-ping" />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-2xl font-mono font-bold text-rose-300">{formatTime(recordingTime)}</h3>
+                      <p className="text-rose-300/70 text-sm">녹음 중...</p>
+                    </div>
+                    <button
+                      onClick={stopRecording}
+                      className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white px-8 py-3 rounded-full font-semibold transition-all shadow-lg transform hover:-translate-y-0.5"
+                    >
+                      <Square className="w-4 h-4 fill-white" />
+                      녹음 중지
+                    </button>
+                  </>
+                ) : (
+                  // 초기 상태
+                  <>
+                    <div className="bg-rose-500/10 p-5 rounded-full ring-1 ring-rose-500/30">
+                      <Mic className="w-10 h-10 text-rose-400" />
+                    </div>
+                    <div className="space-y-2">
+                      <h3 className="text-xl font-semibold text-white">실시간 녹음</h3>
+                      <p className="text-purple-300/80 text-sm">버튼을 눌러 마이크로 회의를 바로 녹음하세요</p>
+                    </div>
+                    <button
+                      onClick={startRecording}
+                      className="flex items-center gap-2 bg-gradient-to-r from-rose-600 to-orange-500 hover:from-rose-500 hover:to-orange-400 text-white px-8 py-3 rounded-full font-semibold transition-all shadow-lg transform hover:-translate-y-0.5"
+                    >
+                      <Mic className="w-4 h-4" />
+                      녹음 시작하기
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="mt-4 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-200 text-sm flex items-start gap-3">
               <span className="shrink-0 font-bold bg-red-500/20 text-red-400 p-1 rounded-md">Error</span>
@@ -421,17 +783,16 @@ export default function Home() {
           <div className="w-full flex gap-8">
             {/* Transcript */}
             <div className="w-[40%] flex flex-col gap-6">
-              <div className="bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-xl shadow-2xl flex flex-col h-[800px]">
-                <h3 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-400 flex items-center gap-2 mb-6">
-                  <FileAudio className="w-6 h-6 text-cyan-400" />
-                  Transcript
-                </h3>
-                <div className="bg-white/5 p-4 rounded-xl mb-4 border border-white/10 space-y-3">
-                  <h4 className="text-sm font-semibold text-white/80">화자 매핑 (Speaker Map)</h4>
-                  {Object.keys(speakerMap).map(speaker => (
-                    <div key={speaker} className="flex items-center gap-2">
-                      <span className="w-20 text-sm text-cyan-300 font-mono truncate">{speaker}</span>
-                      <span className="text-white/40">→</span>
+              {/* Speaker Mapping Section */}
+              <div className="bg-white/5 border border-white/10 p-6 rounded-2xl backdrop-blur-xl">
+                <h4 className="text-sm font-bold text-white/50 mb-4 uppercase tracking-wider flex items-center gap-2">
+                  <Users className="w-4 h-4" />
+                  화자 식별 및 참여자 매핑
+                </h4>
+                <div className="flex flex-wrap gap-4 items-end">
+                  {Object.keys(speakerMap).map((speaker) => (
+                    <div key={speaker} className="flex flex-col gap-1.5 min-w-[140px] flex-1 max-w-[200px]">
+                      <label className="text-xs font-bold text-cyan-400/80 ml-1 truncate">{speaker}</label>
                       <select
                         value={speakerMap[speaker]}
                         onChange={e => setSpeakerMap({ ...speakerMap, [speaker]: e.target.value })}

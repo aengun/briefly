@@ -68,21 +68,30 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
     ];
 
-    // Using gemini-flash-latest (Stable 1.5)
-    const model = genAI.getGenerativeModel({ 
-      model: 'gemini-flash-latest', 
-      safetySettings
-    });
+    // 시도할 모델 우선순위 목록
+    const modelsToTry = [
+      'gemini-2.0-flash',
+      'gemini-pro-latest',
+      'gemini-flash-latest',
+      'gemini-1.5-flash'
+    ];
 
-    // --- STEP 1: SUMMARY PASS ---
-    const summaryPrompt = `
+    let lastError = null;
+    let successfulModel = "";
+    let summaryData = null;
+    let transcriptData = null;
+
+    for (const modelName of modelsToTry) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName, safetySettings });
+        
+        // --- STEP 1: SUMMARY PASS ---
+        const summaryPrompt = `
 이 오디오는 회의 녹음 파일입니다. 다음 구조의 JSON 형식으로 회의를 요약해주세요. 
-반드시 올바른 JSON 형식으로 시작하고 끝내주세요. 다른 서설은 생략하세요.
 
-[규칙]
-1. 각 항목(asis, tobe, expected_effects)의 내용 앞에는 "1.", "2."와 같은 번호를 절대 붙이지 마세요.
-2. 각 항목 내에서 중요한 포인트가 여러 개일 경우, 반드시 줄바꿈(\\n)으로 구분하여 작성하세요.
-3. 한 문단에 모든 내용을 넣지 말고, 가독성을 위해 리스트 형태로 내용을 나누어 작성하세요.
+[중요 지침]
+1. 만약 오디오에 의미 있는 대화가 없거나, 소음/바람 소리만 들린다면 모든 필드를 빈 문자열("") 또는 빈 배열([])로 반환하세요. 절대 내용을 지어내지 마세요.
+2. 대화가 식별될 때만 아래 형식을 작성하세요.
 
 {
   "summary": {
@@ -95,24 +104,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 }
 `;
+        const sResult = await model.generateContent([
+          { fileData: { fileUri: uploadResult.file.uri, mimeType: uploadResult.file.mimeType } },
+          summaryPrompt,
+        ]);
+        summaryData = extractJSON(sResult.response.text());
+        if (!summaryData) continue;
 
-    const summaryResult = await model.generateContent([
-      { fileData: { fileUri: uploadResult.file.uri, mimeType: uploadResult.file.mimeType } },
-      summaryPrompt,
-    ]);
-
-    const summaryText = summaryResult.response.text();
-    const summaryData = extractJSON(summaryText);
-    
-    if (!summaryData) {
-      console.error('Final attempt summary text:', summaryText);
-      throw new Error("요약 데이터 추출에 실패했습니다. (AI 응답 불완전)");
-    }
-
-    // --- STEP 2: TRANSCRIPT PASS ---
-    const transcriptPrompt = `
+        // --- STEP 2: TRANSCRIPT PASS ---
+        const transcriptPrompt = `
 오디오의 전체 대화 내역(transcript)을 다음 JSON 형식으로 변환해주세요.
-반드시 JSON 형식만 출력하세요. 다른 말은 하지 마세요.
+만약 대화가 전혀 들리지 않는다면 "transcript": [] 와 같이 빈 배열을 반환하세요. 절대 허구의 대화를 만들지 마세요.
 
 {
   "transcript": [
@@ -120,25 +122,33 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   ]
 }
 `;
-
-    const transcriptResult = await model.generateContent([
-      { fileData: { fileUri: uploadResult.file.uri, mimeType: uploadResult.file.mimeType } },
-      transcriptPrompt,
-    ]);
-
-    const transcriptText = transcriptResult.response.text();
-    let transcriptData = extractJSON(transcriptText);
-    
-    if (!transcriptData) {
-      console.error('Final attempt transcript text:', transcriptText);
-      transcriptData = { transcript: [] }; // Fallback
+        const tResult = await model.generateContent([
+          { fileData: { fileUri: uploadResult.file.uri, mimeType: uploadResult.file.mimeType } },
+          transcriptPrompt,
+        ]);
+        transcriptData = extractJSON(tResult.response.text());
+        
+        successfulModel = modelName;
+        break; // 성공 시 루프 탈출
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`Model ${modelName} failed, trying next...`, err.message);
+        continue;
+      }
     }
 
-    // --- COMBINE AND RETURN ---
+    if (!summaryData) {
+      const errMsg = lastError?.message || "";
+      if (errMsg.includes("429")) return NextResponse.json({ error: "현재 AI 사용량이 많아 잠시 후 다시 시도해주세요. (할당량 초과)" }, { status: 429 });
+      if (errMsg.includes("503")) return NextResponse.json({ error: "AI 서버가 일시적으로 응답하지 않습니다. 잠시 후 다시 시도해주세요." }, { status: 503 });
+      return NextResponse.json({ error: "분석 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요." }, { status: 500 });
+    }
+
     return NextResponse.json({
       ...summaryData,
-      ...transcriptData,
-      audioUrl
+      transcript: transcriptData?.transcript || [],
+      audioUrl,
+      usedModel: successfulModel // 어떤 모델이 사용되었는지 반환
     });
 
   } catch (error: any) {

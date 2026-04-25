@@ -99,3 +99,28 @@ export async function DELETE(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+): Promise<NextResponse> {
+  try {
+    const { id } = await params;
+    const meeting = await prisma.meeting.findUnique({
+      where: { id },
+      include: {
+        participants: true,
+        transcript: true,
+        schedule: true
+      }
+    });
+
+    if (!meeting) {
+      return NextResponse.json({ error: "회의를 찾을 수 없습니다." }, { status: 404 });
+    }
+
+    return NextResponse.json(meeting);
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
