@@ -33,11 +33,12 @@ export default async function ArchivesPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-12 duration-1000 delay-150 fill-mode-both">
-        {meetings.length === 0 ? (
+        {safeMeetings.length === 0 ? (
           <div className="col-span-full py-12 text-center bg-white/5 rounded-3xl border border-white/10 backdrop-blur-xl">
             <h3 className="text-xl text-white/50 font-medium">저장된 회의 기록이 없습니다.</h3>
           </div>
         ) : (
+          safeMeetings.map((m: any) => (
             <div 
               key={m.id} 
               className="bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-xl shadow-lg group flex flex-col gap-4 relative"
@@ -91,6 +92,7 @@ export default async function ArchivesPage() {
                 </p>
               </div>
             </div>
+          ))
         )}
       </div>
     </main>

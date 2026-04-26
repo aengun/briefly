@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Calendar, ChevronRight, FileAudio, UsersRound, Save, Loader2, Users, UserPlus, FileText, Share2 } from "lucide-react";
+import { Calendar, ChevronRight, FileAudio, UsersRound, Save, Loader2, Users, UserPlus, FileText, Share2, LayoutGrid, CheckSquare, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 type Participant = {
@@ -49,6 +49,7 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
   const [isSaving, setIsSaving] = useState(false);
   const [isSendingToConfluence, setIsSendingToConfluence] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
+  const [showTaskTemplate, setShowTaskTemplate] = useState(false);
 
   // For participant management
   const [newTeam, setNewTeam] = useState("");
@@ -227,6 +228,7 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
   };
 
   return (
+    <>
     <div className="flex flex-col gap-8">
       {/* Header */}
       <div className="bg-white/5 border border-white/10 p-8 rounded-3xl backdrop-blur-xl relative overflow-hidden">
@@ -271,6 +273,13 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
             {!isEditMode && (
               <>
                 <button
+                  onClick={() => setShowTaskTemplate(true)}
+                  className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg border border-white/10 flex items-center gap-2"
+                >
+                  <LayoutGrid className="w-5 h-5" />
+                  일감진행
+                </button>
+                <button
                   onClick={handleCopyHtml}
                   className="bg-white/10 text-white hover:bg-white/20 px-6 py-2.5 rounded-xl font-semibold transition-all flex items-center gap-2 border border-white/10"
                 >
@@ -287,7 +296,7 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
                   ) : (
                     <Share2 className="w-5 h-5" />
                   )}
-                  Confluence로 전송
+                  WIKI 전송
                 </button>
               </>
             )}
@@ -591,5 +600,116 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
         </div>
       </div>
     </div>
+
+      {/* Task Template Modal */}
+      {showTaskTemplate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-in fade-in duration-300 text-left">
+          <div className="bg-slate-900 border border-white/10 w-full max-w-4xl max-h-[90vh] rounded-[2rem] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-300">
+            {/* Modal Header */}
+            <div className="p-8 border-b border-white/10 flex items-center justify-between bg-gradient-to-r from-orange-500/10 to-amber-500/10">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-orange-500 rounded-2xl text-white">
+                  <CheckSquare className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-2xl font-bold text-white">일감 진행 초안 생성</h3>
+                  <p className="text-orange-200/60 text-sm">회의 내용을 기반으로 단위/중점 업무 양식을 구성했습니다.</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowTaskTemplate(false)}
+                className="p-2 hover:bg-white/10 rounded-full text-white/40 hover:text-white transition-all"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 overflow-y-auto p-8 space-y-10 scrollbar-thin max-h-[calc(90vh-200px)]">
+              {/* 단위업무 Section */}
+              <section className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-1.5 h-6 bg-amber-500 rounded-full" />
+                  <h4 className="text-xl font-bold text-white">단위 업무 (Unit Tasks)</h4>
+                </div>
+                <div className="space-y-3">
+                  {meeting.schedule.map((task, idx) => (
+                    <div key={idx} className="flex items-center gap-4 bg-white/5 border border-white/10 p-4 rounded-2xl group hover:bg-white/[0.08] transition-all">
+                      <div className="w-8 h-8 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-sm shrink-0">
+                        {idx + 1}
+                      </div>
+                      <div className="flex-1 grid grid-cols-12 gap-4">
+                        <div className="col-span-7">
+                          <label className="text-[10px] font-bold text-white/30 uppercase block mb-1">Task Name</label>
+                          <input 
+                            type="text" 
+                            defaultValue={task.task}
+                            className="bg-transparent text-white font-medium outline-none w-full"
+                          />
+                        </div>
+                        <div className="col-span-3">
+                          <label className="text-[10px] font-bold text-white/30 uppercase block mb-1">Assignee</label>
+                          <input 
+                            type="text" 
+                            defaultValue={task.assignee}
+                            className="bg-transparent text-amber-200 outline-none w-full"
+                          />
+                        </div>
+                        <div className="col-span-2 text-right">
+                          <label className="text-[10px] font-bold text-white/30 uppercase block mb-1">Due Date</label>
+                          <input 
+                            type="text" 
+                            defaultValue={task.dueDate}
+                            className="bg-transparent text-white/60 text-sm outline-none w-full text-right"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              {/* 중점업무 Section */}
+              <section className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-1.5 h-6 bg-orange-500 rounded-full" />
+                  <h4 className="text-xl font-bold text-white">중점 업무 (Key Tasks)</h4>
+                </div>
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="bg-white/5 border border-white/10 rounded-2xl p-6 hover:border-orange-500/30 transition-colors">
+                    <label className="text-[10px] uppercase font-bold text-orange-400 mb-2 block tracking-widest">Strategic Goal</label>
+                    <textarea 
+                      className="w-full bg-transparent text-white text-lg font-medium leading-relaxed outline-none resize-none min-h-[100px]"
+                      defaultValue={meeting.tobe}
+                    />
+                  </div>
+                  <div className="bg-white/5 border border-white/10 rounded-2xl p-6 hover:border-orange-500/30 transition-colors">
+                    <label className="text-[10px] uppercase font-bold text-orange-400 mb-2 block tracking-widest">Expected Outcome</label>
+                    <textarea 
+                      className="w-full bg-transparent text-white/80 leading-relaxed outline-none resize-none min-h-[80px]"
+                      defaultValue={meeting.expected_effects}
+                    />
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-8 border-t border-white/10 bg-white/[0.02] flex items-center justify-end gap-4">
+              <button 
+                onClick={() => setShowTaskTemplate(false)}
+                className="px-6 py-3 rounded-xl text-white font-semibold hover:bg-white/10 transition-all"
+              >
+                취소
+              </button>
+              <button className="px-8 py-3 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white rounded-xl font-bold shadow-lg transform hover:-translate-y-0.5 transition-all">
+                WIKI 전송
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+    </>
   );
 }
