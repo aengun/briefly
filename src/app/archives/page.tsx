@@ -5,7 +5,7 @@ import { Calendar, Users, ChevronRight, FileAudio, RefreshCcw } from 'lucide-rea
 export const dynamic = 'force-dynamic';
 
 export default async function ArchivesPage() {
-  let meetings = [];
+  let meetings: any[] = [];
   try {
     meetings = await prisma.meeting.findMany({
       orderBy: { meetingDate: 'desc' },
