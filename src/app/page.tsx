@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { UploadCloud, FileAudio, Loader2, CheckCircle2, ChevronRight, Download, Users, UserPlus, Save, Mic, MicOff, Square, Play, RefreshCcw, LayoutGrid, CheckSquare, X } from "lucide-react";
+import { UploadCloud, FileAudio, Loader2, CheckCircle2, ChevronRight, Download, Users, UserPlus, Save, Mic, MicOff, Square, Play, RefreshCcw, LayoutGrid, CheckSquare, X, FileText } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Modal from "../components/Modal";
 
@@ -881,7 +881,7 @@ ${renderAsList(summary.expected_effects)}
       {/* 4. Result Section */}
       {result && (
         <section className="w-full flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
-          <div className="flex items-center gap-4 flex-1 bg-white/5 border border-white/10 p-4 rounded-2xl backdrop-blur-xl">
+          <div className="flex items-end gap-4 flex-1 bg-white/5 border border-white/10 p-4 pb-5 rounded-2xl backdrop-blur-xl">
             <div className="flex flex-col gap-1 flex-1">
               <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold ml-2">Meeting Title</label>
               <input
@@ -892,17 +892,17 @@ ${renderAsList(summary.expected_effects)}
                 placeholder="회의 제목을 입력하세요"
               />
             </div>
-            <div className="w-px h-10 bg-white/10 mx-2" />
+            <div className="w-px h-10 bg-white/10 mx-2 mb-1" />
             <div className="flex flex-col gap-1">
               <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold ml-2">Meeting Date</label>
               <input
                 type="date"
                 value={meetingDate}
                 onChange={e => setMeetingDate(e.target.value)}
-                className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white outline-none focus:border-cyan-400 transition-all text-sm"
+                className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white outline-none focus:border-cyan-400 transition-all text-sm h-[42px]"
               />
             </div>
-            <div className="ml-auto flex items-center gap-3">
+            <div className="ml-auto flex items-center gap-3 mb-0.5">
               <button
                 onClick={() => setShowTaskTemplate(true)}
                 className="flex items-center gap-2 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg border border-white/10"
@@ -933,13 +933,9 @@ ${renderAsList(summary.expected_effects)}
             <div className="w-[40%] flex flex-col gap-6">
               {/* Speaker Mapping Section */}
               <div className="bg-white/5 border border-white/10 p-6 rounded-2xl backdrop-blur-xl">
-                <h4 className="text-sm font-bold text-white/50 mb-4 uppercase tracking-wider flex items-center gap-2">
-                  <Users className="w-4 h-4" />
-                  화자 식별 및 참여자 매핑
-                </h4>
-                <div className="flex flex-wrap gap-4 items-end">
+                <div className="grid grid-cols-2 gap-4 mb-8">
                   {Object.keys(speakerMap).map((speaker) => (
-                    <div key={speaker} className="flex flex-col gap-1.5 min-w-[140px] flex-1 max-w-[200px]">
+                    <div key={speaker} className="flex flex-col gap-1.5">
                       <label className="text-xs font-bold text-cyan-400/80 ml-1 truncate">{speaker}</label>
                       <select
                         value={speakerMap[speaker]}
@@ -954,7 +950,12 @@ ${renderAsList(summary.expected_effects)}
                     </div>
                   ))}
                 </div>
-                <div className="flex-1 overflow-y-auto pr-4 space-y-4 scrollbar-thin">
+                
+                <h4 className="text-sm font-bold text-white/50 mb-4 uppercase tracking-wider flex items-center gap-2 pt-4 border-t border-white/5">
+                  <FileText className="w-4 h-4" />
+                  대화 내역 (Transcript)
+                </h4>
+                <div className="flex-1 overflow-y-auto pr-2 space-y-4 scrollbar-thin max-h-[500px]">
                   {result.transcript.map((u, i) => (
                     <div key={i} className="flex flex-col gap-1 p-3 bg-white/[0.03] rounded-xl border border-white/5">
                       <span className="text-xs font-bold text-fuchsia-300">{speakerMap[u.speaker] || u.speaker}</span>
