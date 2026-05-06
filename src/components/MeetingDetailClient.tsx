@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Calendar, ChevronRight, FileAudio, UsersRound, Save, Loader2, Users, UserPlus, FileText, Share2, LayoutGrid, CheckSquare, X } from "lucide-react";
 import { useRouter } from "next/navigation";
+import Modal from "./Modal";
 
 type Participant = {
   id: string;
@@ -58,6 +59,30 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
   // For Speaker Mapping in Edit Mode
   const [speakerMap, setSpeakerMap] = useState<Record<string, string>>({});
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+
+  // Custom Modal State
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: "alert" | "confirm" | "error" | "success";
+    onConfirm?: () => void;
+    confirmText?: string;
+    cancelText?: string;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    type: "alert"
+  });
+
+  const showModal = (config: Omit<typeof modalConfig, "isOpen">) => {
+    setModalConfig({ ...config, isOpen: true });
+  };
+
+  const closeModal = () => {
+    setModalConfig(prev => ({ ...prev, isOpen: false }));
+  };
 
   useEffect(() => {
     fetch("/api/team-members")
@@ -119,27 +144,44 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
       setMeeting(data.meeting);
       setSpeakerMap({});
       setIsEditMode(false);
-      alert("변경 사항이 저장되었습니다.");
+      showModal({
+        title: "저장 완료",
+        message: "변경 사항이 성공적으로 저장되었습니다.",
+        type: "success"
+      });
       router.refresh();
     } catch (err: any) {
-      alert("저장 실패: " + err.message);
+      showModal({
+        title: "저장 실패",
+        message: err.message,
+        type: "error"
+      });
     } finally {
       setIsSaving(false);
     }
   };
 
   const renderAsList = (text: string) => {
-    return text.split("\n").filter(line => line.trim()).map(line => `<li>${line.trim()}</li>`).join("");
+    return text.split("\n\n")
+      .filter(p => p.trim())
+      .map(p => {
+        const items = p.split("\n")
+          .filter(line => line.trim())
+          .map(line => `<li>${line.trim()}</li>`)
+          .join("");
+        return `<ul>${items}</ul>`;
+      })
+      .join("\n");
   };
 
   const handleCopyHtml = () => {
     const html = `
 <h3>1. 현황 및 문제점</h3>
-<ul>${renderAsList(meeting.asis)}</ul>
+${renderAsList(meeting.asis)}
 <h3>2. 개선방향 (목적)</h3>
-<ul>${renderAsList(meeting.tobe)}</ul>
+${renderAsList(meeting.tobe)}
 <h3>3. 기대효과</h3>
-<ul>${renderAsList(meeting.expected_effects)}</ul>
+${renderAsList(meeting.expected_effects)}
 <h3>4. 일감내용 및 일정</h3>
 <table border="1" style="border-collapse: collapse; width: 100%;">
   <thead>
@@ -162,25 +204,43 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
     `.trim();
 
     navigator.clipboard.writeText(html).then(() => {
-      alert("HTML 형식이 클립보드에 복사되었습니다.");
+      showModal({
+        title: "복사 완료",
+        message: "HTML 형식이 클립보드에 복사되었습니다.",
+        type: "success"
+      });
     }).catch(err => {
       console.error("복사 실패:", err);
-      alert("복사 중 오류가 발생했습니다.");
+      showModal({
+        title: "복사 실패",
+        message: "복사 중 오류가 발생했습니다.",
+        type: "error"
+      });
     });
   };
 
-  const handleSendToConfluence = async () => {
-    if (!confirm("이 내용을 Confluence로 전송하여 새 페이지로 저장하시겠습니까?")) return;
+  const handleSendToConfluence = () => {
+    showModal({
+      title: "WIKI 전송",
+      message: "이 내용을 Confluence로 전송하여 새 페이지로 저장하시겠습니까?",
+      type: "confirm",
+      onConfirm: async () => {
+        closeModal();
+        await executeSendToConfluence();
+      }
+    });
+  };
 
+  const executeSendToConfluence = async () => {
     setIsSendingToConfluence(true);
     try {
       const html = `
 <h3>1. 현황 및 문제점</h3>
-<ul>${renderAsList(meeting.asis)}</ul>
+${renderAsList(meeting.asis)}
 <h3>2. 개선방향 (목적)</h3>
-<ul>${renderAsList(meeting.tobe)}</ul>
+${renderAsList(meeting.tobe)}
 <h3>3. 기대효과</h3>
-<ul>${renderAsList(meeting.expected_effects)}</ul>
+${renderAsList(meeting.expected_effects)}
 <h3>4. 일감내용 및 일정</h3>
 <table border="1" style="border-collapse: collapse; width: 100%;">
   <thead>
@@ -202,11 +262,16 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
 </table>
       `.trim();
 
+      const dateObj = new Date(meeting.meetingDate);
+      const formattedDate = dateObj.getFullYear().toString() + "-" + 
+                          (dateObj.getMonth() + 1).toString().padStart(2, '0') + "-" + 
+                          dateObj.getDate().toString().padStart(2, '0');
+
       const res = await fetch("/api/confluence", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: `[회의록] ${meeting.title}`,
+          title: `[${formattedDate}] ${meeting.title}`,
           html: html
         })
       });
@@ -217,11 +282,23 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
         throw new Error(data.error || "Confluence 전송 실패");
       }
 
-      if (confirm("Confluence 페이지가 성공적으로 생성되었습니다. 페이지를 확인하시겠습니까?")) {
-        window.open(data.url, "_blank");
-      }
+      showModal({
+        title: "전송 완료",
+        message: "Confluence 페이지가 성공적으로 생성되었습니다.",
+        type: "confirm",
+        confirmText: "페이지 확인",
+        cancelText: "닫기",
+        onConfirm: () => {
+          closeModal();
+          window.open(data.url, "_blank");
+        }
+      });
     } catch (err: any) {
-      alert("오류 발생: " + err.message);
+      showModal({
+        title: "전송 실패",
+        message: err.message,
+        type: "error"
+      });
     } finally {
       setIsSendingToConfluence(false);
     }
@@ -462,12 +539,14 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
                     className="w-full bg-white/5 border border-white/20 rounded-2xl p-5 text-white outline-none focus:border-fuchsia-500/50 min-h-[100px]"
                   />
                 ) : (
-                  <div className="p-5 bg-white/5 rounded-2xl border border-white/10">
-                    <ul className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
-                      {meeting.asis.split("\n").filter(line => line.trim()).map((line, i) => (
-                        <li key={i}>{line.trim()}</li>
-                      ))}
-                    </ul>
+                  <div className="p-5 bg-white/5 rounded-2xl border border-white/10 space-y-4">
+                    {meeting.asis.split("\n\n").filter(p => p.trim()).map((p, pIdx) => (
+                      <ul key={pIdx} className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
+                        {p.split("\n").filter(line => line.trim()).map((line, i) => (
+                          <li key={i}>{line.trim()}</li>
+                        ))}
+                      </ul>
+                    ))}
                   </div>
                 )}
               </div>
@@ -483,12 +562,14 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
                     className="w-full bg-white/5 border border-white/20 rounded-2xl p-5 text-white outline-none focus:border-cyan-500/50 min-h-[100px]"
                   />
                 ) : (
-                  <div className="p-5 bg-white/5 rounded-2xl border border-white/10">
-                    <ul className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
-                      {meeting.tobe.split("\n").filter(line => line.trim()).map((line, i) => (
-                        <li key={i}>{line.trim()}</li>
-                      ))}
-                    </ul>
+                  <div className="p-5 bg-white/5 rounded-2xl border border-white/10 space-y-4">
+                    {meeting.tobe.split("\n\n").filter(p => p.trim()).map((p, pIdx) => (
+                      <ul key={pIdx} className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
+                        {p.split("\n").filter(line => line.trim()).map((line, i) => (
+                          <li key={i}>{line.trim()}</li>
+                        ))}
+                      </ul>
+                    ))}
                   </div>
                 )}
               </div>
@@ -504,12 +585,14 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
                     className="w-full bg-white/5 border border-white/20 rounded-2xl p-5 text-white outline-none focus:border-green-500/50 min-h-[100px]"
                   />
                 ) : (
-                  <div className="p-5 bg-white/5 rounded-2xl border border-white/10">
-                    <ul className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
-                      {meeting.expected_effects.split("\n").filter(line => line.trim()).map((line, i) => (
-                        <li key={i}>{line.trim()}</li>
-                      ))}
-                    </ul>
+                  <div className="p-5 bg-white/5 rounded-2xl border border-white/10 space-y-4">
+                    {meeting.expected_effects.split("\n\n").filter(p => p.trim()).map((p, pIdx) => (
+                      <ul key={pIdx} className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
+                        {p.split("\n").filter(line => line.trim()).map((line, i) => (
+                          <li key={i}>{line.trim()}</li>
+                        ))}
+                      </ul>
+                    ))}
                   </div>
                 )}
               </div>
@@ -710,6 +793,16 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
         </div>
       )}
 
+      <Modal
+        isOpen={modalConfig.isOpen}
+        onClose={closeModal}
+        title={modalConfig.title}
+        message={modalConfig.message}
+        type={modalConfig.type}
+        onConfirm={modalConfig.onConfirm}
+        confirmText={modalConfig.confirmText}
+        cancelText={modalConfig.cancelText}
+      />
     </>
   );
 }

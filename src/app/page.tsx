@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { UploadCloud, FileAudio, Loader2, CheckCircle2, ChevronRight, Download, Users, UserPlus, Save, Mic, MicOff, Square, Play, RefreshCcw, LayoutGrid, CheckSquare, X } from "lucide-react";
 import { useRouter } from "next/navigation";
+import Modal from "../components/Modal";
 
 // Define the interfaces based on our DB types
 type ScheduleItem = {
@@ -59,7 +60,32 @@ export default function Home() {
   const [isSaving, setIsSaving] = useState(false);
   const [meetingTitle, setMeetingTitle] = useState("");
   const [meetingDate, setMeetingDate] = useState("");
+  const [isSendingToConfluence, setIsSendingToConfluence] = useState(false);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+
+  // Custom Modal State
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: "alert" | "confirm" | "error" | "success";
+    onConfirm?: () => void;
+    confirmText?: string;
+    cancelText?: string;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    type: "alert"
+  });
+
+  const showModal = (config: Omit<typeof modalConfig, "isOpen">) => {
+    setModalConfig({ ...config, isOpen: true });
+  };
+
+  const closeModal = () => {
+    setModalConfig(prev => ({ ...prev, isOpen: false }));
+  };
 
   // Recording state
   const [activeTab, setActiveTab] = useState<"upload" | "record">("upload");
@@ -358,6 +384,19 @@ export default function Home() {
     }
   };
 
+  const renderAsList = (text: string) => {
+    return text.split("\n\n")
+      .filter(p => p.trim())
+      .map(p => {
+        const items = p.split("\n")
+          .filter(line => line.trim())
+          .map(line => `<li>${line.trim()}</li>`)
+          .join("");
+        return `<ul>${items}</ul>`;
+      })
+      .join("\n");
+  };
+
   const handleSaveToArchive = async () => {
     if (!result) return;
     setIsSaving(true);
@@ -381,10 +420,18 @@ export default function Home() {
       });
 
       if (!res.ok) throw new Error(await res.text());
-      alert("보관소에 저장되었습니다!");
+      showModal({
+        title: "저장 완료",
+        message: "보관소에 성공적으로 저장되었습니다!",
+        type: "success"
+      });
       router.push("/archives");
     } catch (err: any) {
-      alert("저장 실패: " + err.message);
+      showModal({
+        title: "저장 실패",
+        message: err.message,
+        type: "error"
+      });
     } finally {
       setIsSaving(false);
     }
@@ -396,11 +443,11 @@ export default function Home() {
     const { summary } = result;
     const html = `
 <h3>1. 현황 및 문제점</h3>
-<p>${summary.asis.replace(/\n/g, "<br/>")}</p>
+${renderAsList(summary.asis)}
 <h3>2. 개선방향 (목적)</h3>
-<p>${summary.tobe.replace(/\n/g, "<br/>")}</p>
+${renderAsList(summary.tobe)}
 <h3>3. 기대효과</h3>
-<p>${summary.expected_effects.replace(/\n/g, "<br/>")}</p>
+${renderAsList(summary.expected_effects)}
 <h3>4. 일감내용 및 일정</h3>
 <table border="1" style="border-collapse: collapse; width: 100%;">
   <thead>
@@ -423,11 +470,103 @@ export default function Home() {
     `.trim();
 
     navigator.clipboard.writeText(html).then(() => {
-      alert("HTML 형식이 클립보드에 복사되었습니다.");
+      showModal({
+        title: "복사 완료",
+        message: "HTML 형식이 클립보드에 복사되었습니다.",
+        type: "success"
+      });
     }).catch(err => {
       console.error("복사 실패:", err);
-      alert("복사 중 오류가 발생했습니다.");
+      showModal({
+        title: "복사 실패",
+        message: "복사 중 오류가 발생했습니다.",
+        type: "error"
+      });
     });
+  };
+
+  const handleSendToConfluence = () => {
+    showModal({
+      title: "WIKI 전송",
+      message: "이 내용을 Confluence로 전송하시겠습니까?",
+      type: "confirm",
+      onConfirm: async () => {
+        closeModal();
+        await executeSendToConfluence();
+      }
+    });
+  };
+
+  const executeSendToConfluence = async () => {
+    if (!result) return;
+    setIsSendingToConfluence(true);
+    try {
+      const { summary } = result;
+      const html = `
+<h3>1. 현황 및 문제점</h3>
+${renderAsList(summary.asis)}
+<h3>2. 개선방향 (목적)</h3>
+${renderAsList(summary.tobe)}
+<h3>3. 기대효과</h3>
+${renderAsList(summary.expected_effects)}
+<h3>4. 일감내용 및 일정</h3>
+<table border="1" style="border-collapse: collapse; width: 100%;">
+  <thead>
+    <tr style="background-color: #f2f2f2;">
+      <th style="padding: 8px; text-align: left;">Task</th>
+      <th style="padding: 8px; text-align: left;">Assignee</th>
+      <th style="padding: 8px; text-align: left;">Due Date</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${summary.schedule.map((item: ScheduleItem) => `
+    <tr>
+      <td style="padding: 8px;">${item.task}</td>
+      <td style="padding: 8px;">${item.assignee}</td>
+      <td style="padding: 8px;">${item.dueDate}</td>
+    </tr>
+    `).join("")}
+  </tbody>
+</table>
+      `.trim();
+
+      const dateObj = new Date(meetingDate);
+      const formattedDate = dateObj.getFullYear().toString() + "-" + 
+                          (dateObj.getMonth() + 1).toString().padStart(2, '0') + "-" + 
+                          dateObj.getDate().toString().padStart(2, '0');
+
+      const res = await fetch("/api/confluence", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `[${formattedDate}] ${meetingTitle}`,
+          html: html
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Confluence 전송 실패");
+
+      showModal({
+        title: "전송 완료",
+        message: "Confluence 페이지가 생성되었습니다.",
+        type: "confirm",
+        confirmText: "확인하기",
+        cancelText: "닫기",
+        onConfirm: () => {
+          closeModal();
+          window.open(data.url, "_blank");
+        }
+      });
+    } catch (err: any) {
+      showModal({
+        title: "전송 실패",
+        message: err.message,
+        type: "error"
+      });
+    } finally {
+      setIsSendingToConfluence(false);
+    }
   };
 
   return (
@@ -838,19 +977,43 @@ export default function Home() {
                     <h4 className="text-sm font-bold text-fuchsia-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-fuchsia-400"></span> 1. 현황 및 문제점
                     </h4>
-                    <div className="p-5 bg-white/5 rounded-2xl border border-white/10"><p className="text-white/90 leading-relaxed font-pre-wrap">{result.summary.asis}</p></div>
+                    <div className="p-5 bg-white/5 rounded-2xl border border-white/10 space-y-4">
+                      {result.summary.asis.split("\n\n").filter(p => p.trim()).map((p, pIdx) => (
+                        <ul key={pIdx} className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
+                          {p.split("\n").filter(line => line.trim()).map((line, i) => (
+                            <li key={i}>{line.trim()}</li>
+                          ))}
+                        </ul>
+                      ))}
+                    </div>
                   </div>
                   <div className="group">
                     <h4 className="text-sm font-bold text-cyan-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-cyan-400"></span> 2. 개선방향 (목적)
                     </h4>
-                    <div className="p-5 bg-white/5 rounded-2xl border border-white/10"><p className="text-white/90 leading-relaxed font-pre-wrap">{result.summary.tobe}</p></div>
+                    <div className="p-5 bg-white/5 rounded-2xl border border-white/10 space-y-4">
+                      {result.summary.tobe.split("\n\n").filter(p => p.trim()).map((p, pIdx) => (
+                        <ul key={pIdx} className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
+                          {p.split("\n").filter(line => line.trim()).map((line, i) => (
+                            <li key={i}>{line.trim()}</li>
+                          ))}
+                        </ul>
+                      ))}
+                    </div>
                   </div>
                   <div className="group">
                     <h4 className="text-sm font-bold text-green-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-green-400"></span> 3. 기대효과
                     </h4>
-                    <div className="p-5 bg-white/5 rounded-2xl border border-white/10"><p className="text-white/90 leading-relaxed font-pre-wrap">{result.summary.expected_effects}</p></div>
+                    <div className="p-5 bg-white/5 rounded-2xl border border-white/10 space-y-4">
+                      {result.summary.expected_effects.split("\n\n").filter(p => p.trim()).map((p, pIdx) => (
+                        <ul key={pIdx} className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
+                          {p.split("\n").filter(line => line.trim()).map((line, i) => (
+                            <li key={i}>{line.trim()}</li>
+                          ))}
+                        </ul>
+                      ))}
+                    </div>
                   </div>
                   <div className="mt-12 pt-8 border-t border-white/10">
                     <div className="flex items-center justify-between mb-6">
@@ -990,13 +1153,27 @@ export default function Home() {
               >
                 취소
               </button>
-              <button className="px-8 py-3 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white rounded-xl font-bold shadow-lg transform hover:-translate-y-0.5 transition-all">
-                WIKI 전송
+              <button 
+                onClick={handleSendToConfluence}
+                disabled={isSendingToConfluence}
+                className="px-8 py-3 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white rounded-xl font-bold shadow-lg transform hover:-translate-y-0.5 transition-all disabled:opacity-50"
+              >
+                {isSendingToConfluence ? <Loader2 className="w-5 h-5 animate-spin" /> : "WIKI 전송"}
               </button>
             </div>
           </div>
         </div>
       )}
+      <Modal
+        isOpen={modalConfig.isOpen}
+        onClose={closeModal}
+        title={modalConfig.title}
+        message={modalConfig.message}
+        type={modalConfig.type}
+        onConfirm={modalConfig.onConfirm}
+        confirmText={modalConfig.confirmText}
+        cancelText={modalConfig.cancelText}
+      />
     </main>
     </>
   );
