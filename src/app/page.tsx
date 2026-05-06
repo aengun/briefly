@@ -58,6 +58,8 @@ export default function Home() {
   const [speakerMap, setSpeakerMap] = useState<Record<string, string>>({});
 
   const [isSaving, setIsSaving] = useState(false);
+  const [analysisTime, setAnalysisTime] = useState(0);
+  const analysisTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [meetingTitle, setMeetingTitle] = useState("");
   const [meetingDate, setMeetingDate] = useState("");
   const [isSendingToConfluence, setIsSendingToConfluence] = useState(false);
@@ -307,7 +309,13 @@ export default function Home() {
     if (!targetFile) return;
 
     setIsUploading(true);
+    setAnalysisTime(0);
     setError(null);
+
+    // 분석 타이머 시작
+    analysisTimerRef.current = setInterval(() => {
+      setAnalysisTime(prev => prev + 1);
+    }, 1000);
 
     const formData = new FormData();
     formData.append("file", targetFile);
@@ -364,8 +372,17 @@ export default function Home() {
         friendlyError = "API 권한 오류가 발생했습니다. 키 설정을 확인해 주세요.";
       }
       setError(friendlyError);
+      showModal({
+        title: "분석 오류",
+        message: friendlyError,
+        type: "error"
+      });
     } finally {
       setIsUploading(false);
+      if (analysisTimerRef.current) {
+        clearInterval(analysisTimerRef.current);
+        analysisTimerRef.current = null;
+      }
     }
   };
 
@@ -729,8 +746,11 @@ ${renderAsList(summary.expected_effects)}
                       <Loader2 className="w-16 h-16 text-fuchsia-400 animate-spin" />
                       <div className="absolute inset-0 blur-xl bg-fuchsia-500/30 rounded-full animate-pulse" />
                     </div>
-                    <h3 className="text-xl font-semibold text-white">AI가 회의를 분석하고 있습니다...</h3>
-                    <p className="text-purple-300/80 text-sm">참석자 식별 및 문맥 요약 중입니다. 잠시만 기다려주세요.</p>
+                     <h3 className="text-xl font-semibold text-white">AI가 회의를 분석하고 있습니다...</h3>
+                    <div className="flex flex-col items-center gap-1">
+                      <span className="text-2xl font-mono font-bold text-fuchsia-300">{formatTime(analysisTime)}</span>
+                      <p className="text-purple-300/80 text-sm">참석자 식별 및 문맥 요약 중입니다. 잠시만 기다려주세요.</p>
+                    </div>
                   </>
                 ) : file && activeTab === "upload" ? (
                   <>
@@ -778,8 +798,10 @@ ${renderAsList(summary.expected_effects)}
                     </div>
                     <h3 className="text-xl font-semibold text-white">AI가 회의를 분석하고 있습니다...</h3>
                     <div className="flex flex-col items-center gap-1">
-                      <p className="text-cyan-300/80 text-sm italic animate-pulse">최적의 모델을 찾아 분석을 진행 중입니다...</p>
-                      <p className="text-white/40 text-[11px] mt-2 font-medium bg-white/5 px-3 py-1 rounded-full border border-white/10">
+                      <span className="text-2xl font-mono font-bold text-cyan-300">{formatTime(analysisTime)}</span>
+                      <p className="text-cyan-300/80 text-sm">참석자 식별 및 문맥 요약 중입니다. 잠시만 기다려주세요.</p>
+                      <p className="text-cyan-300/80 text-sm italic animate-pulse mt-2">최적의 모델을 찾아 분석을 진행 중입니다...</p>
+                      <p className="text-white/40 text-[11px] mt-1 font-medium bg-white/5 px-3 py-1 rounded-full border border-white/10">
                         파일 크기에 따라 10초 ~ 40초 정도 소요됩니다
                       </p>
                     </div>
@@ -933,22 +955,30 @@ ${renderAsList(summary.expected_effects)}
             <div className="w-[40%] flex flex-col gap-6">
               {/* Speaker Mapping Section */}
               <div className="bg-white/5 border border-white/10 p-6 rounded-2xl backdrop-blur-xl">
+                <h4 className="text-sm font-bold text-white/50 mb-4 uppercase tracking-wider flex items-center gap-2">
+                  <Users className="w-4 h-4" />
+                  화자 식별 및 참여자 매핑
+                </h4>
                 <div className="grid grid-cols-2 gap-4 mb-8">
-                  {Object.keys(speakerMap).map((speaker) => (
-                    <div key={speaker} className="flex flex-col gap-1.5">
-                      <label className="text-xs font-bold text-cyan-400/80 ml-1 truncate">{speaker}</label>
-                      <select
-                        value={speakerMap[speaker]}
-                        onChange={e => setSpeakerMap({ ...speakerMap, [speaker]: e.target.value })}
-                        className="bg-white/10 border border-white/20 rounded-lg px-3 py-1.5 outline-none text-white text-sm flex-1"
-                      >
-                        <option value="" className="text-gray-900">알 수 없음</option>
-                        {participants.map(p => (
-                          <option key={p.id} value={`${p.team} ${p.name}`} className="text-gray-900">{p.team} {p.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  ))}
+                  {Object.keys(speakerMap).length > 0 ? (
+                    Object.keys(speakerMap).map((speaker) => (
+                      <div key={speaker} className="flex flex-col gap-1.5">
+                        <label className="text-xs font-bold text-cyan-400/80 ml-1 truncate">{speaker}</label>
+                        <select
+                          value={speakerMap[speaker]}
+                          onChange={e => setSpeakerMap({ ...speakerMap, [speaker]: e.target.value })}
+                          className="bg-white/10 border border-white/20 rounded-lg px-3 py-1.5 outline-none text-white text-sm flex-1"
+                        >
+                          <option value="" className="text-gray-900">알 수 없음</option>
+                          {participants.map(p => (
+                            <option key={p.id} value={`${p.team} ${p.name}`} className="text-gray-900">{p.team} {p.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="col-span-2 py-4 text-center text-white/30 text-xs italic">식별된 화자가 없습니다.</div>
+                  )}
                 </div>
                 
                 <h4 className="text-sm font-bold text-white/50 mb-4 uppercase tracking-wider flex items-center gap-2 pt-4 border-t border-white/5">
@@ -956,12 +986,16 @@ ${renderAsList(summary.expected_effects)}
                   대화 내역 (Transcript)
                 </h4>
                 <div className="flex-1 overflow-y-auto pr-2 space-y-4 scrollbar-thin max-h-[500px]">
-                  {result.transcript.map((u, i) => (
-                    <div key={i} className="flex flex-col gap-1 p-3 bg-white/[0.03] rounded-xl border border-white/5">
-                      <span className="text-xs font-bold text-fuchsia-300">{speakerMap[u.speaker] || u.speaker}</span>
-                      <p className="text-white/90 text-sm leading-relaxed">{u.text}</p>
-                    </div>
-                  ))}
+                  {result.transcript.length > 0 ? (
+                    result.transcript.map((u, i) => (
+                      <div key={i} className="flex flex-col gap-1 p-3 bg-white/[0.03] rounded-xl border border-white/5">
+                        <span className="text-xs font-bold text-fuchsia-300">{speakerMap[u.speaker] || u.speaker}</span>
+                        <p className="text-white/90 text-sm leading-relaxed">{u.text}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="py-8 text-center text-white/30 text-sm">대화 내역이 없습니다.</div>
+                  )}
                 </div>
               </div>
             </div>
