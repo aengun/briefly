@@ -102,11 +102,6 @@ export default function Home() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [newTeam, setNewTeam] = useState("");
   const [newName, setNewName] = useState("");
-  const [autoAddParticipants, setAutoAddParticipants] = useState(true);
-
-  // Diarization Mapping
-  const [speakerMap, setSpeakerMap] = useState<Record<string, string>>({});
-
   const [isSaving, setIsSaving] = useState(false);
   const [analysisTime, setAnalysisTime] = useState(0);
   const analysisTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -322,43 +317,22 @@ export default function Home() {
     }
   };
 
-  const mergeAutoParticipants = (
-    baseParticipants: Participant[],
-    transcript: TranscriptUtterance[],
-    shouldAutoAdd: boolean
-  ) => {
-    if (!shouldAutoAdd) return baseParticipants;
-
-    const existingNames = new Set(baseParticipants.map(p => p.name));
-    const uniqueSpeakers = [...new Set(transcript.map(u => u.speaker).filter(Boolean))];
-    const newParticipants = uniqueSpeakers
-      .filter(speaker => !existingNames.has(speaker))
-      .map(speaker => ({
-        id: crypto.randomUUID(),
-        team: "미지정",
-        name: speaker
-      }));
-
-    return [...baseParticipants, ...newParticipants];
-  };
 
   const persistMeetingToArchive = async ({
     meetingResult,
     title,
     sourceType,
     participantsForSave,
-    transcriptMap,
     existingMeetingId
   }: {
     meetingResult: SummaryResult;
     title: string;
     sourceType: SourceType;
     participantsForSave: Participant[];
-    transcriptMap: Record<string, string>;
     existingMeetingId?: string | null;
   }) => {
     const mappedTranscript = meetingResult.transcript.map(u => ({
-      speaker: transcriptMap[u.speaker] || u.speaker || "알 수 없음",
+      speaker: u.speaker || "알 수 없음",
       text: u.text || ""
     }));
 
@@ -432,18 +406,17 @@ export default function Home() {
         console.log(`Used AI Model: ${data.usedModel}`);
       }
       
-      const initialMap: Record<string, string> = {};
+      // 발화자 자동 명명 (참가자1, 참가자2...)
       if (Array.isArray(normalizedResult.transcript)) {
-        normalizedResult.transcript.forEach((u: TranscriptUtterance) => {
-          if (!initialMap[u.speaker]) initialMap[u.speaker] = "";
+        const speakerNames: Record<string, string> = {};
+        let speakerCount = 0;
+        normalizedResult.transcript = normalizedResult.transcript.map(u => {
+          if (!speakerNames[u.speaker]) {
+            speakerCount++;
+            speakerNames[u.speaker] = `참가자${speakerCount}`;
+          }
+          return { ...u, speaker: speakerNames[u.speaker] };
         });
-      }
-      setSpeakerMap(initialMap);
-
-      // 자동 참여자 추가: transcript 화자 → participants
-      const nextParticipants = mergeAutoParticipants(participants, normalizedResult.transcript, autoAddParticipants);
-      if (autoAddParticipants) {
-        setParticipants(nextParticipants);
       }
 
       try {
@@ -451,8 +424,7 @@ export default function Home() {
           meetingResult: normalizedResult,
           title: defaultTitle,
           sourceType,
-          participantsForSave: nextParticipants,
-          transcriptMap: initialMap,
+          participantsForSave: participants,
           existingMeetingId: null
         });
         setSavedMeetingId(savedMeeting.id);
@@ -552,7 +524,6 @@ export default function Home() {
         title: meetingTitle || "제목 없는 회의록",
         sourceType: resultSourceType,
         participantsForSave: participants,
-        transcriptMap: speakerMap,
         existingMeetingId: savedMeetingId
       });
       setSavedMeetingId(savedMeeting.id);
@@ -600,37 +571,12 @@ export default function Home() {
             <Users className="w-5 h-5 text-cyan-400" />
             회의 참여자 관리
           </h3>
-          {/* 자동 참여자 추가 슬라이드 토글 */}
-          <label className="flex items-center gap-3 cursor-pointer select-none group">
-            <span className={`text-sm font-medium transition-colors duration-200 ${
-              autoAddParticipants ? "text-cyan-300" : "text-white/30"
-            }`}>
-              자동 인식
-            </span>
-            <button
-              role="switch"
-              aria-checked={autoAddParticipants}
-              onClick={() => setAutoAddParticipants(prev => !prev)}
-              className={`relative w-11 h-6 rounded-full transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-cyan-400/50 ${
-                autoAddParticipants
-                  ? "bg-cyan-500"
-                  : "bg-white/15"
-              }`}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-all duration-300 ${
-                autoAddParticipants ? "translate-x-5" : "translate-x-0"
-              }`} />
-            </button>
-          </label>
         </div>
         <div className="flex flex-wrap md:flex-nowrap gap-4 mb-4">
           <select
             onChange={handleAddITMember}
             defaultValue=""
-            disabled={autoAddParticipants}
-            className={`bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-cyan-400 transition-colors w-full md:w-auto min-w-[200px] ${
-              autoAddParticipants ? "opacity-50 cursor-not-allowed" : ""
-            }`}
+            className="bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-cyan-400 transition-colors w-full md:w-auto min-w-[200px]"
           >
             <option value="" disabled className="text-gray-900">팀원 선택</option>
             {teamMembers.map(m => (
@@ -646,27 +592,18 @@ export default function Home() {
               placeholder="팀명"
               value={newTeam}
               onChange={e => setNewTeam(e.target.value)}
-              disabled={autoAddParticipants}
-              className={`flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-fuchsia-400 transition-colors min-w-0 ${
-                autoAddParticipants ? "opacity-50 cursor-not-allowed" : ""
-              }`}
+              className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-fuchsia-400 transition-colors min-w-0"
             />
             <input
               type="text"
               placeholder="이름/직급"
               value={newName}
               onChange={e => setNewName(e.target.value)}
-              disabled={autoAddParticipants}
-              className={`flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-fuchsia-400 transition-colors min-w-0 ${
-                autoAddParticipants ? "opacity-50 cursor-not-allowed" : ""
-              }`}
+              className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-fuchsia-400 transition-colors min-w-0"
             />
             <button
               onClick={handleAddParticipant}
-              disabled={autoAddParticipants}
-              className={`bg-white/20 hover:bg-white/30 text-white px-4 py-3 rounded-xl transition-colors flex items-center justify-center shrink-0 ${
-                autoAddParticipants ? "opacity-50 cursor-not-allowed" : ""
-              }`}
+              className="bg-white/20 hover:bg-white/30 text-white px-4 py-3 rounded-xl transition-colors flex items-center justify-center shrink-0"
             >
               <UserPlus className="w-5 h-5" />
             </button>
@@ -957,35 +894,8 @@ export default function Home() {
           <div className="w-full flex flex-col gap-8 lg:flex-row">
             {/* 회의록 */}
             <div className="w-full lg:w-[40%] flex flex-col gap-6">
-              {/* Speaker Mapping Section */}
               <div className="bg-white/5 border border-white/10 p-6 rounded-2xl backdrop-blur-xl">
                 <h4 className="text-sm font-bold text-white/50 mb-4 uppercase tracking-wider flex items-center gap-2">
-                  <Users className="w-4 h-4" />
-                  화자 식별 및 참여자 매핑
-                </h4>
-                <div className="grid grid-cols-2 gap-4 mb-8">
-                  {Object.keys(speakerMap).length > 0 ? (
-                    Object.keys(speakerMap).map((speaker) => (
-                      <div key={speaker} className="flex flex-col gap-1.5">
-                        <label className="text-xs font-bold text-cyan-400/80 ml-1 truncate">{speaker}</label>
-                        <select
-                          value={speakerMap[speaker]}
-                          onChange={e => setSpeakerMap({ ...speakerMap, [speaker]: e.target.value })}
-                          className="bg-white/10 border border-white/20 rounded-lg px-3 py-1.5 outline-none text-white text-sm flex-1"
-                        >
-                          <option value="" className="text-gray-900">알 수 없음</option>
-                          {participants.map(p => (
-                            <option key={p.id} value={`${p.team} ${p.name}`} className="text-gray-900">{p.team} {p.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="col-span-2 py-4 text-center text-white/30 text-xs italic">식별된 화자가 없습니다.</div>
-                  )}
-                </div>
-                
-                <h4 className="text-sm font-bold text-white/50 mb-4 uppercase tracking-wider flex items-center gap-2 pt-4 border-t border-white/5">
                   <FileText className="w-4 h-4" />
                   회의록 대화 내역
                 </h4>
@@ -993,7 +903,7 @@ export default function Home() {
                   {result.transcript.length > 0 ? (
                     result.transcript.map((u, i) => (
                       <div key={i} className="flex flex-col gap-1 p-3 bg-white/[0.03] rounded-xl border border-white/5">
-                        <span className="text-xs font-bold text-fuchsia-300">{speakerMap[u.speaker] || u.speaker}</span>
+                        <span className="text-xs font-bold text-fuchsia-300">{u.speaker}</span>
                         <p className="text-white/90 text-sm leading-relaxed">{u.text}</p>
                       </div>
                     ))

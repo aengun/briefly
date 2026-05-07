@@ -71,8 +71,6 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
   const [newTeam, setNewTeam] = useState("");
   const [newName, setNewName] = useState("");
 
-  // For Speaker Mapping in Edit Mode
-  const [speakerMap, setSpeakerMap] = useState<Record<string, string>>({});
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
 
   // Custom Modal State
@@ -156,12 +154,6 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      // Apply speaker mapping if any
-      const updatedTranscript = meeting.transcript.map(u => ({
-        ...u,
-        speaker: speakerMap[u.speaker] || u.speaker
-      }));
-
       const res = await fetch(`/api/meetings/${meeting.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -170,7 +162,7 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
           sourceType: meeting.sourceType,
           meetingDate: meeting.meetingDate,
           participants: meeting.participants,
-          transcript: updatedTranscript,
+          transcript: meeting.transcript,
           summary: {
             asis: meeting.asis,
             tobe: meeting.tobe,
@@ -184,7 +176,6 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
       
       const data = await res.json();
       setMeeting(data.meeting);
-      setSpeakerMap({});
       setIsEditMode(false);
       showModal({
         title: "저장 완료",
@@ -501,37 +492,13 @@ ${renderAsList(meeting.expected_effects)}
               </div>
             )}
 
-            {/* 화자 매핑 수정 */}
-            {isEditMode && (
-              <div className="bg-white/5 p-4 rounded-xl mb-4 border border-white/10 space-y-3 animate-in slide-in-from-top-2">
-                <h4 className="text-sm font-semibold text-white/80">화자 다시 매핑</h4>
-                {Array.from(new Set(meeting.transcript.map(u => u.speaker))).map(speaker => (
-                  <div key={speaker} className="flex items-center gap-2">
-                    <span className="w-20 text-xs text-cyan-300 font-mono truncate" title={speaker}>{speaker}</span>
-                    <span className="text-white/40">→</span>
-                    <select
-                      value={speakerMap[speaker] || ""}
-                      onChange={e => setSpeakerMap({ ...speakerMap, [speaker]: e.target.value })}
-                      className="bg-white/10 border border-white/20 rounded-lg px-3 py-1.5 outline-none text-white text-xs flex-1"
-                    >
-                      <option value="" className="text-gray-900">원본 유지 ({speaker})</option>
-                      {meeting.participants.map(p => (
-                        <option key={p.id} value={`${p.team} ${p.name}`} className="text-gray-900">
-                          {p.team} {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ))}
-              </div>
-            )}
 
             <div className="flex-1 overflow-y-auto pr-4 space-y-4 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent pb-10">
               {meeting.transcript.length > 0 ? (
                 meeting.transcript.map((u, i) => (
                   <div key={i} className="flex flex-col gap-1 p-3 bg-white/[0.03] rounded-xl border border-white/5">
                     <span className="text-xs font-bold text-fuchsia-300">
-                      {isEditMode ? (speakerMap[u.speaker] || u.speaker) : u.speaker}
+                      {u.speaker}
                     </span>
                     <p className="text-white/90 text-sm leading-relaxed">{u.text}</p>
                   </div>
