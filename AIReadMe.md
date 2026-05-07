@@ -64,4 +64,5 @@
   - 실패한 방식: `git push origin main`은 HTTPS credential이 없어 `could not read Username`으로 실패했다.
   - 실패한 방식: SSH URL push는 `github.com` host key 등록 후에도 로컬 SSH public key가 GitHub에 등록되어 있지 않아 `Permission denied (publickey)`로 실패했다.
   - 실패한 방식: GitHub 커넥터의 Git blob API는 현재 설치 권한에서 `Resource not accessible by integration` 403으로 실패했다.
-  - 해결방법: 로컬에 GitHub HTTPS credential/PAT를 등록하거나, GitHub에 SSH public key를 등록한 뒤 다시 `git push origin main`을 실행한다.
+  - 성공한 방식: `brew install gh`로 GitHub CLI를 설치하고 `printf 'y\n' | gh auth login --hostname github.com --git-protocol https --web`로 device login을 완료한다.
+  - 성공한 방식: 로그인 후 `gh auth setup-git`을 실행해야 일반 `git push origin main`이 gh credential을 사용한다.
