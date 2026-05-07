@@ -60,3 +60,8 @@
   - 성공한 방식: `content.id`, `content.title`, `content._links.webui`를 우선 읽고 최상위 필드는 fallback으로만 사용한다.
 - `searchConfluencePages`에서 `map(... null).filter(Boolean)` 형태는 런타임상 맞아도 Next 빌드 타입체크가 `null` 제거를 인정하지 못할 수 있다.
   - 성공한 방식: `ConfluencePageResult[]` 배열을 만들고 유효한 항목만 `push`해서 반환한다.
+- GitHub 원격 push는 로컬 Git 인증 상태를 먼저 확인해야 한다.
+  - 실패한 방식: `git push origin main`은 HTTPS credential이 없어 `could not read Username`으로 실패했다.
+  - 실패한 방식: SSH URL push는 `github.com` host key 등록 후에도 로컬 SSH public key가 GitHub에 등록되어 있지 않아 `Permission denied (publickey)`로 실패했다.
+  - 실패한 방식: GitHub 커넥터의 Git blob API는 현재 설치 권한에서 `Resource not accessible by integration` 403으로 실패했다.
+  - 해결방법: 로컬에 GitHub HTTPS credential/PAT를 등록하거나, GitHub에 SSH public key를 등록한 뒤 다시 `git push origin main`을 실행한다.
