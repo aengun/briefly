@@ -42,6 +42,7 @@ type PageSearchPanelProps = {
 type WorkProgressModalProps = WorkProgressSource & {
   isOpen: boolean;
   onClose: () => void;
+  onSuccess?: (data: any) => void;
 };
 
 const fieldClass = "w-full rounded-lg border border-white/15 bg-white/[0.06] px-3 py-2 text-sm text-white outline-none transition focus:border-amber-300/70 focus:bg-white/[0.09]";
@@ -175,6 +176,7 @@ function PageSearchPanel({
 export default function WorkProgressModal({
   isOpen,
   onClose,
+  onSuccess,
   meetingTitle,
   meetingDate,
   participants,
@@ -442,7 +444,12 @@ export default function WorkProgressModal({
         type: "success",
         text: "WIKI 전송이 완료되었습니다.",
       });
-      setTimeout(onClose, 600);
+      
+      if (onSuccess) {
+        onSuccess(data);
+      } else {
+        setTimeout(onClose, 600);
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "회의록 등록 중 오류가 발생했습니다.";
       setMessage({ type: "error", text: errorMessage });

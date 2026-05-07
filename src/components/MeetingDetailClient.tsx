@@ -672,6 +672,20 @@ ${renderAsList(meeting.expected_effects)}
       <WorkProgressModal
         isOpen={showTaskTemplate}
         onClose={() => setShowTaskTemplate(false)}
+        onSuccess={(data) => {
+          setShowTaskTemplate(false);
+          showModal({
+            title: "전송 완료",
+            message: "단위업무 생성 및 주요진행업무 업데이트가 완료되었습니다.",
+            type: "confirm",
+            confirmText: "단위업무 확인",
+            cancelText: "닫기",
+            onConfirm: () => {
+              closeModal();
+              if (data.unitPage?.url) window.open(data.unitPage.url, "_blank");
+            }
+          });
+        }}
         meetingTitle={meeting.title}
         meetingDate={meeting.meetingDate}
         participants={meeting.participants}
