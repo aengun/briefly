@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: "WIKI 전송이 완료되었습니다.",
+      message: "회의록 등록이 완료되었습니다.",
       unitPage,
       mainPage,
       mainProgressWork: updatedMainProgressWork,

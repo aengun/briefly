@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { UploadCloud, FileAudio, Loader2, CheckCircle2, ChevronRight, Download, Users, UserPlus, Save, Mic, MicOff, Square, Play, LayoutGrid, FileText } from "lucide-react";
+import { UploadCloud, FileAudio, Loader2, CheckCircle2, ChevronRight, Users, UserPlus, Save, Mic, MicOff, Square, Play, LayoutGrid, FileText } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Modal from "../components/Modal";
 import WorkProgressModal from "../components/WorkProgressModal";
@@ -576,53 +576,6 @@ export default function Home() {
     }
   };
 
-  const handleCopyHtml = () => {
-    if (!result) return;
-
-    const { summary } = result;
-    const html = `
-<h3>1. 현황 및 문제점</h3>
-${renderAsList(summary.asis)}
-<h3>2. 개선방향 (목적)</h3>
-${renderAsList(summary.tobe)}
-<h3>3. 기대효과</h3>
-${renderAsList(summary.expected_effects)}
-<h3>4. 일감내용 및 일정</h3>
-<table border="1" style="border-collapse: collapse; width: 100%;">
-  <thead>
-    <tr style="background-color: #f2f2f2;">
-      <th style="padding: 8px; text-align: left;">일감</th>
-      <th style="padding: 8px; text-align: left;">담당자</th>
-      <th style="padding: 8px; text-align: left;">기한</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${summary.schedule.map(item => `
-    <tr>
-      <td style="padding: 8px;">${escapeHtml(item.task)}</td>
-      <td style="padding: 8px;">${escapeHtml(item.assignee)}</td>
-      <td style="padding: 8px;">${escapeHtml(item.dueDate)}</td>
-    </tr>
-    `).join("")}
-  </tbody>
-</table>
-    `.trim();
-
-    navigator.clipboard.writeText(html).then(() => {
-      showModal({
-        title: "복사 완료",
-        message: "문서 형식이 클립보드에 복사되었습니다.",
-        type: "success"
-      });
-    }).catch(err => {
-      console.error("복사 실패:", err);
-      showModal({
-        title: "복사 실패",
-        message: "복사 중 오류가 발생했습니다.",
-        type: "error"
-      });
-    });
-  };
 
   return (
     <>
@@ -980,13 +933,7 @@ ${renderAsList(summary.expected_effects)}
                 <LayoutGrid className="w-5 h-5" />
                 일감진행
               </button>
-              <button
-                onClick={handleCopyHtml}
-                className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white px-6 py-2.5 rounded-xl font-semibold transition-all border border-white/10"
-              >
-                <Download className="w-5 h-5" />
-                문서 형식 복사
-              </button>
+
               <button
                 onClick={handleSaveToArchive}
                 disabled={isSaving}

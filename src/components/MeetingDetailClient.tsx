@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Calendar, ChevronRight, FileAudio, UsersRound, Save, Loader2, Users, UserPlus, FileText, Share2, LayoutGrid, Trash2 } from "lucide-react";
+import { Calendar, ChevronRight, FileAudio, UsersRound, Save, Loader2, Users, UserPlus, Share2, LayoutGrid, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Modal from "./Modal";
 import WorkProgressModal from "./WorkProgressModal";
@@ -231,55 +231,11 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
     ));
   };
 
-  const handleCopyHtml = () => {
-    const html = `
-<h3>1. 현황 및 문제점</h3>
-${renderAsList(meeting.asis)}
-<h3>2. 개선방향 (목적)</h3>
-${renderAsList(meeting.tobe)}
-<h3>3. 기대효과</h3>
-${renderAsList(meeting.expected_effects)}
-<h3>4. 일감내용 및 일정</h3>
-<table border="1" style="border-collapse: collapse; width: 100%;">
-  <thead>
-    <tr style="background-color: #f2f2f2;">
-      <th style="padding: 8px; text-align: left;">일감</th>
-      <th style="padding: 8px; text-align: left;">담당자</th>
-      <th style="padding: 8px; text-align: left;">기한</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${meeting.schedule.map(item => `
-    <tr>
-      <td style="padding: 8px;">${escapeHtml(item.task)}</td>
-      <td style="padding: 8px;">${escapeHtml(item.assignee)}</td>
-      <td style="padding: 8px;">${escapeHtml(item.dueDate)}</td>
-    </tr>
-    `).join("")}
-  </tbody>
-</table>
-    `.trim();
-
-    navigator.clipboard.writeText(html).then(() => {
-      showModal({
-        title: "복사 완료",
-        message: "문서 형식이 클립보드에 복사되었습니다.",
-        type: "success"
-      });
-    }).catch(err => {
-      console.error("복사 실패:", err);
-      showModal({
-        title: "복사 실패",
-        message: "복사 중 오류가 발생했습니다.",
-        type: "error"
-      });
-    });
-  };
 
   const handleSendToConfluence = () => {
     showModal({
-      title: "WIKI 전송",
-      message: "이 내용을 WIKI로 전송하여 새 페이지로 저장하시겠습니까?",
+      title: "회의록 등록",
+      message: "이 내용을 회의록으로 등록하시겠습니까?",
       type: "confirm",
       onConfirm: async () => {
         closeModal();
@@ -336,12 +292,12 @@ ${renderAsList(meeting.expected_effects)}
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || "WIKI 전송 실패");
+        throw new Error(data.error || "회의록 등록 실패");
       }
 
       showModal({
-        title: "전송 완료",
-        message: "WIKI 페이지가 생성되었습니다.",
+        title: "등록 완료",
+        message: "회의록이 등록되었습니다.",
         type: "confirm",
         confirmText: "페이지 확인",
         cancelText: "닫기",
@@ -421,13 +377,6 @@ ${renderAsList(meeting.expected_effects)}
                   일감진행
                 </button>
                 <button
-                  onClick={handleCopyHtml}
-                  className="bg-white/10 text-white hover:bg-white/20 px-6 py-2.5 rounded-xl font-semibold transition-all flex items-center gap-2 border border-white/10"
-                >
-                  <FileText className="w-5 h-5" />
-                  문서 형식 복사
-                </button>
-                <button
                   onClick={handleSendToConfluence}
                   disabled={isSendingToConfluence}
                   className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg flex items-center gap-2 disabled:opacity-50"
@@ -437,7 +386,7 @@ ${renderAsList(meeting.expected_effects)}
                   ) : (
                     <Share2 className="w-5 h-5" />
                   )}
-                  WIKI 전송
+                  회의록 등록
                 </button>
               </>
             )}

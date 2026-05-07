@@ -418,7 +418,7 @@ export default function WorkProgressModal({
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || "WIKI 전송 중 오류가 발생했습니다.");
+        throw new Error(data.error || "회의록 등록 중 오류가 발생했습니다.");
       }
 
       if (data.mainProgressWork) {
@@ -427,14 +427,14 @@ export default function WorkProgressModal({
 
       setMessage({
         type: "success",
-        text: "WIKI 전송이 완료되었습니다.",
+        text: "회의록 등록이 완료되었습니다.",
         links: [
           ...(data.unitPage?.url ? [{ label: "단위업무 페이지 열기", url: data.unitPage.url }] : []),
           ...(data.mainPage?.url ? [{ label: "주요진행업무 페이지 열기", url: data.mainPage.url }] : []),
         ],
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "WIKI 전송 중 오류가 발생했습니다.";
+      const errorMessage = error instanceof Error ? error.message : "회의록 등록 중 오류가 발생했습니다.";
       setMessage({ type: "error", text: errorMessage });
     } finally {
       setIsSending(false);
@@ -451,7 +451,7 @@ export default function WorkProgressModal({
       >
         <div className="flex items-start justify-between gap-4 border-b border-white/10 bg-white/[0.04] px-5 py-5 sm:px-7">
           <div className="min-w-0">
-            <p className="mb-1 text-xs font-bold text-amber-300">회의록 기반 WIKI 전송</p>
+            <p className="mb-1 text-xs font-bold text-amber-300">회의록 등록</p>
             <h2 id="work-progress-title" className="text-2xl font-bold text-white">일감진행</h2>
             <p className="mt-2 text-sm leading-relaxed text-white/60">
               분석된 회의록을 단위업무 페이지와 주요진행업무 양식으로 정리합니다.
@@ -707,7 +707,7 @@ export default function WorkProgressModal({
                         onChange={event => updateMainRow(index, { unitWorkLink: event.target.value })}
                         className={fieldClass}
                         aria-label="단위업무링크"
-                        placeholder="WIKI 생성 후 자동 입력됩니다"
+                        placeholder="등록 후 자동 입력됩니다"
                       />
                     </label>
                     <label className="block">
@@ -744,7 +744,7 @@ export default function WorkProgressModal({
                     <div key={index} className="rounded-lg bg-white/[0.04] p-3 text-sm text-white/70">
                       <div className="font-semibold text-white">{row.mainWorkName || "주요진행업무명 입력 필요"}</div>
                       <div className="mt-1">담당자: {row.owner || "입력 필요"}</div>
-                      <div className="mt-1">링크: {row.unitWorkLink || "WIKI 생성 후 자동 입력됩니다"}</div>
+                      <div className="mt-1">링크: {row.unitWorkLink || "등록 후 자동 입력됩니다"}</div>
                     </div>
                   ))}
                 </div>
@@ -776,7 +776,7 @@ export default function WorkProgressModal({
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-6 py-3 text-sm font-bold text-white shadow-lg transition hover:from-orange-400 hover:to-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            WIKI로 전송
+            회의록 등록
           </button>
         </div>
       </div>

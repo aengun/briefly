@@ -77,7 +77,7 @@ export function getConfluenceConfig(): ConfluenceConfig {
   if (missing.length > 0) {
     throw new ConfluenceError(
       500,
-      "WIKI 연동 환경변수가 설정되지 않았습니다.",
+      "회의록 시스템 연동 환경변수가 설정되지 않았습니다.",
       { missing }
     );
   }
@@ -181,7 +181,7 @@ export function buildMainProgressWorkHtml(mainProgressWork: MainProgressWork) {
     ${rows.map(item => `
     <tr>
       ${tableCell(item.mainWorkName)}
-      ${tableCell(item.unitWorkLink || "WIKI 생성 후 자동 입력됩니다")}
+      ${tableCell(item.unitWorkLink || "등록 후 자동 입력됩니다")}
       ${tableCell(item.owner)}
     </tr>`).join("")}
   </tbody>
@@ -270,7 +270,7 @@ export async function createConfluencePage(input: {
   const initialTitle = input.title.trim();
 
   if (!initialTitle) {
-    throw new ConfluenceError(400, "WIKI 페이지명이 비어 있습니다.");
+    throw new ConfluenceError(400, "페이지명이 비어 있습니다.");
   }
 
   let finalTitle = initialTitle;
@@ -289,10 +289,10 @@ export async function createConfluencePage(input: {
   }
 
   if (!response.ok) {
-    const message = errorData?.message || response.statusText || "WIKI 요청이 실패했습니다.";
+    const message = errorData?.message || response.statusText || "요청이 실패했습니다.";
     throw new ConfluenceError(
       response.status,
-      "WIKI 전송에 실패했습니다. 권한, 공간 키, 상위 페이지 설정을 확인해 주세요.",
+      "회의록 등록에 실패했습니다. 권한, 공간 키, 상위 페이지 설정을 확인해 주세요.",
       { status: response.status, message }
     );
   }
@@ -341,7 +341,7 @@ async function getCurrentUser(config: ConfluenceConfig) {
     const errorData = await readConfluenceError(response);
     throw new ConfluenceError(
       response.status,
-      "WIKI 인증을 확인하지 못했습니다. 이메일과 API 토큰을 다시 확인해 주세요.",
+      "회의록 시스템 인증을 확인하지 못했습니다. 이메일과 API 토큰을 다시 확인해 주세요.",
       { status: response.status, message: errorData.message }
     );
   }
@@ -362,7 +362,7 @@ async function getSpace(config: ConfluenceConfig) {
     const errorData = await readConfluenceError(response);
     throw new ConfluenceError(
       response.status,
-      "WIKI 공간을 확인하지 못했습니다. 공간 키와 권한을 다시 확인해 주세요.",
+      "공간을 확인하지 못했습니다. 공간 키와 권한을 다시 확인해 주세요.",
       { status: response.status, message: errorData.message, spaceKey: config.spaceKey }
     );
   }
@@ -461,7 +461,7 @@ export function confluenceErrorResponse(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown error";
   return {
     status: 500,
-    body: { error: "WIKI 처리 중 알 수 없는 오류가 발생했습니다." },
+    body: { error: "회의록 등록 중 알 수 없는 오류가 발생했습니다." },
     log: { status: 500, message },
   };
 }
