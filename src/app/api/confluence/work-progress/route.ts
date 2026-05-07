@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  buildMainProgressWorkHtml,
+  appendMainProgressWorkToPage,
   buildUnitWorkPageHtml,
+  ConfluenceError,
   confluenceErrorResponse,
   createConfluencePage,
 } from "@/lib/confluence";
@@ -17,7 +18,21 @@ export async function POST(req: NextRequest) {
     const unitParentPageId = typeof body.unitParentPageId === "string" ? body.unitParentPageId : undefined;
     const mainParentPageId = typeof body.mainParentPageId === "string" ? body.mainParentPageId : undefined;
 
-    if (!unitWorkPage?.title || !mainProgressWork?.rows) {
+    if (!unitParentPageId) {
+      return NextResponse.json(
+        { error: "단위업무 상위페이지를 선택해주세요." },
+        { status: 400 }
+      );
+    }
+
+    if (!mainParentPageId) {
+      return NextResponse.json(
+        { error: "수정할 주요진행업무 페이지를 선택해주세요." },
+        { status: 400 }
+      );
+    }
+
+    if (!unitWorkPage?.title?.trim() || !mainProgressWork?.rows?.length) {
       return NextResponse.json(
         { error: "일감진행 전송에 필요한 입력값이 부족합니다." },
         { status: 400 }
@@ -25,12 +40,21 @@ export async function POST(req: NextRequest) {
     }
 
     const unitPageHtml = buildUnitWorkPageHtml(unitWorkPage);
-    const unitPage = await createConfluencePage({
-      title: unitWorkPage.title,
-      html: unitPageHtml,
-      retryDuplicateTitle: true,
-      parentPageId: unitParentPageId,
-    });
+    let unitPage;
+    try {
+      unitPage = await createConfluencePage({
+        title: unitWorkPage.title,
+        html: unitPageHtml,
+        retryDuplicateTitle: true,
+        parentPageId: unitParentPageId,
+      });
+    } catch (error) {
+      throw new ConfluenceError(
+        error instanceof ConfluenceError ? error.status : 500,
+        "단위업무 생성에 실패했습니다. Confluence 권한 또는 상위페이지 설정을 확인해주세요.",
+        { stage: "unitWorkPage" }
+      );
+    }
 
     const updatedMainProgressWork: MainProgressWork = {
       ...mainProgressWork,
@@ -39,14 +63,21 @@ export async function POST(req: NextRequest) {
         unitWorkLink: row.unitWorkLink || unitPage.url,
       })),
     };
-    const mainPageTitle = updatedMainProgressWork.rows[0]?.mainWorkName?.trim() || unitWorkPage.title;
-    const mainProgressHtml = buildMainProgressWorkHtml(updatedMainProgressWork);
-    const mainPage = await createConfluencePage({
-      title: mainPageTitle,
-      html: mainProgressHtml,
-      retryDuplicateTitle: true,
-      parentPageId: mainParentPageId,
-    });
+    let mainPage;
+    try {
+      mainPage = await appendMainProgressWorkToPage({
+        pageId: mainParentPageId,
+        mainProgressWork: updatedMainProgressWork,
+      });
+    } catch (error) {
+      throw new ConfluenceError(
+        error instanceof ConfluenceError ? error.status : 500,
+        error instanceof ConfluenceError
+          ? error.userMessage
+          : "주요진행업무 페이지 수정에 실패했습니다. 페이지 권한 또는 버전 충돌 여부를 확인해주세요.",
+        { stage: "mainProgressWork" }
+      );
+    }
 
     return NextResponse.json({
       success: true,
@@ -54,7 +85,6 @@ export async function POST(req: NextRequest) {
       unitPage,
       mainPage,
       mainProgressWork: updatedMainProgressWork,
-      mainProgressHtml,
     });
   } catch (error) {
     const response = confluenceErrorResponse(error);

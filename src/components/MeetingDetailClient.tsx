@@ -5,6 +5,7 @@ import { Calendar, ChevronRight, FileAudio, UsersRound, Save, Loader2, Users, Us
 import { useRouter } from "next/navigation";
 import Modal from "./Modal";
 import WorkProgressModal from "./WorkProgressModal";
+import { validateAnalyzableContent } from "@/lib/analysis-guard";
 
 type Participant = {
   id: string;
@@ -140,10 +141,10 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
           
           router.push("/archives");
           router.refresh();
-        } catch (err: any) {
+        } catch (err: unknown) {
           showModal({
             title: "오류 발생",
-            message: err.message,
+            message: err instanceof Error ? err.message : "삭제에 실패했습니다.",
             type: "error"
           });
         }
@@ -221,7 +222,6 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
       </ul>
     ));
   };
-
 
   const handleSendToConfluence = () => {
     showModal({
@@ -362,7 +362,9 @@ ${renderAsList(meeting.expected_effects)}
               <>
                 <button
                   onClick={() => setShowTaskTemplate(true)}
-                  className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg border border-white/10 flex items-center gap-2"
+                  disabled={!validateAnalyzableContent(meeting.transcript).isAnalyzable}
+                  title={!validateAnalyzableContent(meeting.transcript).isAnalyzable ? "분석 가능한 회의 내용이 부족해 일감진행을 생성할 수 없습니다." : undefined}
+                  className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg border border-white/10 flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <LayoutGrid className="w-5 h-5" />
                   일감진행

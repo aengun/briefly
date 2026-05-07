@@ -5,6 +5,7 @@ import { UploadCloud, FileAudio, Loader2, CheckCircle2, ChevronRight, Users, Use
 import { useRouter } from "next/navigation";
 import Modal from "../components/Modal";
 import WorkProgressModal from "../components/WorkProgressModal";
+import { validateAnalyzableContent } from "@/lib/analysis-guard";
 
 // Define the interfaces based on our DB types
 type ScheduleItem = {
@@ -43,22 +44,9 @@ type TeamMember = {
   name: string;
 };
 
-type ReanalysisMeeting = {
-  audioUrl?: string;
-  participants?: Participant[];
-  sourceType?: SourceType;
-};
-
 type SavedMeeting = {
   id: string;
 };
-
-const escapeHtml = (value: string) => value
-  .replace(/&/g, "&amp;")
-  .replace(/</g, "&lt;")
-  .replace(/>/g, "&gt;")
-  .replace(/"/g, "&quot;")
-  .replace(/'/g, "&#39;");
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -394,10 +382,19 @@ export default function Home() {
         body: formData,
       });
 
-      if (!response.ok) throw new Error(await response.text());
+      const data = await response.json().catch(() => null) as (Partial<SummaryResult> & { usedModel?: string; error?: string; code?: string }) | null;
+      if (!response.ok) {
+        throw new Error(data?.error || "분석 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
+      }
+      if (!data) {
+        throw new Error("분석 응답을 확인하지 못했습니다.");
+      }
 
-      const data = await response.json() as Partial<SummaryResult> & { usedModel?: string };
       const normalizedResult = normalizeSummaryResult(data);
+      const validation = validateAnalyzableContent(normalizedResult.transcript);
+      if (!validation.isAnalyzable) {
+        throw new Error(validation.message);
+      }
       const defaultTitle = getDefaultTitle(targetFile, sourceType);
       setResult(normalizedResult);
       setMeetingTitle(defaultTitle);
@@ -446,7 +443,20 @@ export default function Home() {
     } catch (err: unknown) {
       const message = getErrorMessage(err);
       let friendlyError = "분석 중 알 수 없는 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
-      if (message.includes("SERVICE_DISABLED") || message.includes("Gemini API has not been used")) {
+      let modalTitle = "분석 오류";
+      if (
+        message.includes("분석 가능한") ||
+        message.includes("충분한 회의") ||
+        message.includes("더 긴 음성") ||
+        message.includes("회의 분석에 필요한")
+      ) {
+        modalTitle = sourceType === "realtime" ? "녹음 내용 부족" : "분석 내용 부족";
+        friendlyError = sourceType === "realtime"
+          ? "녹음된 내용이 부족해 회의록을 생성할 수 없습니다. 회의 분석을 위해 더 충분한 대화 내용을 녹음해주세요."
+          : "분석 가능한 회의 내용이 부족합니다. 업로드한 파일에서 충분한 회의 내용을 찾지 못했습니다.";
+        setResult(null);
+        setShowTaskTemplate(false);
+      } else if (message.includes("SERVICE_DISABLED") || message.includes("Gemini API has not been used")) {
         friendlyError = "Gemini 연동이 현재 이 Google 프로젝트에서 활성화되어 있지 않습니다. Google Cloud Console에서 Generative Language API를 활성화해 주세요.";
       } else if (message.includes("429")) {
         friendlyError = "현재 AI 사용량이 많아 잠시 후 다시 시도해 주세요. (할당량 초과)";
@@ -457,7 +467,7 @@ export default function Home() {
       }
       setError(friendlyError);
       showModal({
-        title: "분석 오류",
+        title: modalTitle,
         message: friendlyError,
         type: "error"
       });
@@ -500,19 +510,6 @@ export default function Home() {
     ));
   };
 
-  const renderAsList = (text: string) => {
-    return text.split("\n\n")
-      .filter(p => p.trim())
-      .map(p => {
-        const items = p.split("\n")
-          .filter(line => line.trim())
-          .map(line => `<li>${escapeHtml(line.trim())}</li>`)
-          .join("");
-        return `<ul>${items}</ul>`;
-      })
-      .join("\n");
-  };
-
   const handleSaveToArchive = async () => {
     if (!result) return;
     setIsSaving(true);
@@ -546,8 +543,6 @@ export default function Home() {
       setIsSaving(false);
     }
   };
-
-
   return (
     <>
     <main className="max-w-6xl mx-auto px-4 py-8 flex flex-col gap-12">
@@ -865,12 +860,13 @@ export default function Home() {
             <div className="flex flex-wrap items-center gap-3 mb-0.5 xl:ml-auto">
               <button
                 onClick={() => setShowTaskTemplate(true)}
-                className="flex items-center gap-2 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg border border-white/10"
+                disabled={!validateAnalyzableContent(result.transcript).isAnalyzable}
+                className="flex items-center gap-2 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg border border-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                title={!validateAnalyzableContent(result.transcript).isAnalyzable ? "분석 가능한 회의 내용이 부족해 일감진행을 생성할 수 없습니다." : undefined}
               >
                 <LayoutGrid className="w-5 h-5" />
                 일감진행
               </button>
-
               <button
                 onClick={handleSaveToArchive}
                 disabled={isSaving}

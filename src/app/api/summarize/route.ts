@@ -7,6 +7,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { Buffer } from 'node:buffer';
+import { validateAnalyzableContent } from '@/lib/analysis-guard';
 
 type SummaryPayload = {
   summary?: {
@@ -61,6 +62,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // Save file to public/uploads
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
+    if (buffer.length < 1024) {
+      return NextResponse.json({
+        error: "분석 가능한 회의 내용이 부족합니다.",
+        code: "INSUFFICIENT_MEETING_CONTENT",
+      }, { status: 422 });
+    }
+
     const fileName = `${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
     const uploadDir = join(process.cwd(), 'public', 'uploads');
     
@@ -102,36 +110,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       try {
         const model = genAI.getGenerativeModel({ model: modelName, safetySettings });
         
-        // --- STEP 1: SUMMARY PASS ---
-        const summaryPrompt = `
-이 오디오는 회의 녹음 파일입니다. 다음 구조의 JSON 형식으로 회의를 요약해주세요. 
-
-[중요 지침]
-1. 만약 오디오에 의미 있는 대화가 없거나, 소음/바람 소리만 들린다면 모든 필드를 빈 문자열("") 또는 빈 배열([])로 반환하세요. 절대 내용을 지어내지 마세요.
-2. 대화가 식별될 때만 아래 형식을 작성하세요.
-
-{
-  "summary": {
-    "asis": "현재 상황과 직면한 문제점들을 요약해주세요. 서로 다른 내용(주제)이라면 빈 줄(두 번의 줄바꿈)로 문단을 구분하여 작성해주세요.",
-    "tobe": "회의를 통해 도출된 개선 방향과 최종 목적을 요약해주세요. 서로 다른 내용(주제)이라면 빈 줄(두 번의 줄바꿈)로 문단을 구분하여 작성해주세요.",
-    "expected_effects": "개선안 적용 시 예상되는 긍정적인 효과들을 요약해주세요. 서로 다른 내용(주제)이라면 빈 줄(두 번의 줄바꿈)로 문단을 구분하여 작성해주세요.",
-    "schedule": [
-      { "task": "할 일", "assignee": "담당자", "dueDate": "기한" }
-    ]
-  }
-}
-`;
-        const sResult = await model.generateContent([
-          { fileData: { fileUri: uploadResult.file.uri, mimeType: uploadResult.file.mimeType } },
-          summaryPrompt,
-        ]);
-        summaryData = extractJSON(sResult.response.text()) as SummaryPayload | null;
-        if (!summaryData) continue;
-
-        // --- STEP 2: TRANSCRIPT PASS ---
+        // --- STEP 1: TRANSCRIPT PASS ---
         const transcriptPrompt = `
 오디오의 전체 대화 내역(transcript)을 다음 JSON 형식으로 변환해주세요.
-만약 대화가 전혀 들리지 않는다면 "transcript": [] 와 같이 빈 배열을 반환하세요. 절대 허구의 대화를 만들지 마세요.
+실제로 들리는 말만 적고, 파일명/업로드 시간/녹음 시간 같은 메타데이터는 사용하지 마세요.
+대화가 전혀 들리지 않거나 무음, 잡음, 짧은 테스트 음성뿐이라면 "transcript": [] 를 반환하세요.
+제공된 오디오에 없는 대화, 담당자, 주제, 업무 내용은 절대 만들지 마세요.
 
 {
   "transcript": [
@@ -144,6 +128,44 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           transcriptPrompt,
         ]);
         transcriptData = extractJSON(tResult.response.text()) as TranscriptPayload | null;
+        const validation = validateAnalyzableContent(transcriptData?.transcript || []);
+        if (!validation.isAnalyzable) {
+          return NextResponse.json({
+            error: validation.message,
+            code: "INSUFFICIENT_MEETING_CONTENT",
+            transcript: transcriptData?.transcript || [],
+            audioUrl,
+          }, { status: 422 });
+        }
+
+        // --- STEP 2: SUMMARY PASS ---
+        const summaryPrompt = `
+아래 transcript에 명시적으로 등장하는 내용만 근거로 회의를 요약하세요.
+
+[중요 지침]
+1. transcript에 없는 사실은 절대 생성하지 마세요.
+2. 담당자, 일정, 문제점, 기대효과, 결정사항을 추측하지 마세요.
+3. 파일명, 업로드 시간, 녹음 시간만으로 회의 주제를 만들지 마세요.
+4. 근거가 부족한 필드는 빈 문자열("") 또는 빈 배열([])로 반환하세요.
+5. 회의 내용이 부족하면 모든 필드를 빈 값으로 반환하세요.
+
+transcript:
+${JSON.stringify(transcriptData?.transcript || [], null, 2)}
+
+{
+  "summary": {
+    "asis": "현재 상황과 직면한 문제점. transcript에 있는 내용만 작성.",
+    "tobe": "개선 방향과 목적. transcript에 있는 내용만 작성.",
+    "expected_effects": "기대효과. transcript에 있는 내용만 작성.",
+    "schedule": [
+      { "task": "할 일", "assignee": "담당자", "dueDate": "기한" }
+    ]
+  }
+}
+`;
+        const sResult = await model.generateContent(summaryPrompt);
+        summaryData = extractJSON(sResult.response.text()) as SummaryPayload | null;
+        if (!summaryData) continue;
         
         successfulModel = modelName;
         break; // 성공 시 루프 탈출

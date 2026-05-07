@@ -1,4 +1,4 @@
-import type { MainProgressWork, UnitWorkPage } from "./work-progress";
+import { formatDisplayMonth, type MainProgressWork, type MainProgressWorkRow, type UnitWorkPage } from "./work-progress";
 
 type ConfluenceConfig = {
   domain: string;
@@ -48,6 +48,19 @@ type ConfluenceSearchItem = {
   url?: string;
 };
 
+type ConfluenceStoragePage = {
+  id: string;
+  title: string;
+  version: {
+    number: number;
+  };
+  body?: {
+    storage?: {
+      value?: string;
+    };
+  };
+};
+
 export class ConfluenceError extends Error {
   status: number;
   userMessage: string;
@@ -94,18 +107,6 @@ export function escapeHtml(value: unknown) {
     .replace(/'/g, "&#39;");
 }
 
-function paragraphHtml(value: string, fallback = "입력 필요") {
-  const text = value.trim();
-  if (!text) return `<p><em>${escapeHtml(fallback)}</em></p>`;
-
-  return text
-    .split(/\n{2,}/)
-    .map(paragraph => paragraph.trim())
-    .filter(Boolean)
-    .map(paragraph => `<p>${escapeHtml(paragraph).replace(/\n/g, "<br />")}</p>`)
-    .join("");
-}
-
 function listHtml(items: string[], fallback = "입력 필요") {
   const safeItems = items.map(item => item.trim()).filter(Boolean);
   if (safeItems.length === 0) return `<p><em>${escapeHtml(fallback)}</em></p>`;
@@ -117,42 +118,73 @@ function tableCell(value: unknown) {
   return `<td style="padding: 8px; border: 1px solid #dfe1e6; vertical-align: top;">${escapeHtml(value)}</td>`;
 }
 
+function tableHtmlCell(value: string) {
+  return `<td style="padding: 8px; border: 1px solid #dfe1e6; vertical-align: top;">${value}</td>`;
+}
+
 function tableHeader(value: string) {
   return `<th style="padding: 8px; border: 1px solid #dfe1e6; text-align: left; background: #f4f5f7;">${escapeHtml(value)}</th>`;
 }
 
 export function buildUnitWorkPageHtml(unitWorkPage: UnitWorkPage) {
-  const rows = unitWorkPage.progressItems.length > 0
-    ? unitWorkPage.progressItems
-    : [{ order: 1, category: "", content: "", owner: "", businessOwner: "" }];
+  const scheduleRows = unitWorkPage.scheduleRows.length > 0
+    ? unitWorkPage.scheduleRows
+    : [{ category: "분석" as const, difficulty: "중" as const, content: "", expectedMonth: "", owner: "", weight: 100 }];
+  const historyRows = unitWorkPage.historyRows.length > 0
+    ? unitWorkPage.historyRows
+    : [{ no: 1, date: "", category: "분석" as const, content: "", itOwner: "", businessOwner: "" }];
 
   return `
-<h2>참가자</h2>
-${listHtml(unitWorkPage.participants)}
-<h2>목적성</h2>
-${paragraphHtml(unitWorkPage.purpose)}
-<h2>문제점</h2>
-${paragraphHtml(unitWorkPage.problems)}
-<h2>기대효과</h2>
-${paragraphHtml(unitWorkPage.expectedEffects)}
-<h2>진행내용</h2>
+<h3>1. 현황/문제점</h3>
+${listHtml(unitWorkPage.statusProblemItems)}
+<h3>2. 개선방향(목적)</h3>
+${listHtml(unitWorkPage.improvementGoalItems)}
+<h3>3. 기대효과</h3>
+${listHtml(unitWorkPage.expectedEffectItems)}
+<h3>4. 일감내용 및 일정</h3>
 <table style="border-collapse: collapse; width: 100%;">
   <thead>
     <tr>
-      ${tableHeader("순서")}
       ${tableHeader("구분")}
+      ${tableHeader("개발 난이도")}
       ${tableHeader("내용")}
-      ${tableHeader("담당자")}
-      ${tableHeader("현업담당자")}
+      ${tableHeader("예상일정")}
+      ${tableHeader("담당")}
+      ${tableHeader("비중")}
     </tr>
   </thead>
   <tbody>
-    ${rows.map(item => `
+    ${scheduleRows.map(item => `
     <tr>
-      ${tableCell(item.order)}
+      ${tableCell(item.category)}
+      ${tableCell(item.difficulty)}
+      ${tableCell(item.content)}
+      ${tableCell(item.expectedMonth)}
+      ${tableCell(item.owner)}
+      ${tableCell(item.weight)}
+    </tr>`).join("")}
+</tbody>
+</table>
+<h3>5. 진행 내역(히스토리)</h3>
+<table style="border-collapse: collapse; width: 100%;">
+  <thead>
+    <tr>
+      ${tableHeader("NO")}
+      ${tableHeader("일자")}
+      ${tableHeader("구분")}
+      ${tableHeader("작업 내용")}
+      ${tableHeader("IT 담당자")}
+      ${tableHeader("현업 담당자")}
+    </tr>
+  </thead>
+  <tbody>
+    ${historyRows.map((item, index) => `
+    <tr>
+      ${tableCell(item.no || index + 1)}
+      ${tableCell(item.date)}
       ${tableCell(item.category)}
       ${tableCell(item.content)}
-      ${tableCell(item.owner)}
+      ${tableCell(item.itOwner)}
       ${tableCell(item.businessOwner)}
     </tr>`).join("")}
   </tbody>
@@ -160,30 +192,110 @@ ${paragraphHtml(unitWorkPage.expectedEffects)}
   `.trim();
 }
 
-export function buildMainProgressWorkHtml(mainProgressWork: MainProgressWork) {
-  const rows = mainProgressWork.rows.length > 0
-    ? mainProgressWork.rows
-    : [{ mainWorkName: "", unitWorkLink: "", owner: "" }];
-
+function buildMainProgressRowHtml(row: MainProgressWorkRow, firstCell = "") {
   return `
-<h2>업무단</h2>
-<p>${escapeHtml(mainProgressWork.workGroup)}</p>
+    <tr>
+      ${tableCell(firstCell)}
+      ${tableCell(formatDisplayMonth(row.registrationMonth))}
+      ${tableHtmlCell(`${escapeHtml(row.mainWorkName)}<br /><small>${escapeHtml(row.status)}</small>`)}
+      ${tableHtmlCell(listHtml(row.overviewItems, "업무 개요를 입력해 주세요."))}
+      ${tableHtmlCell(row.unitWorkLink ? `<a href="${escapeHtml(row.unitWorkLink)}">단위업무 보기</a>` : escapeHtml("단위업무 전송 후 자동 입력됩니다."))}
+      ${tableCell(row.itOwner)}
+      ${tableCell(row.department)}
+    </tr>`;
+}
+
+export function buildMainProgressWorkHtml(mainProgressWork: MainProgressWork) {
+  return `
 <h2>주요진행업무</h2>
 <table style="border-collapse: collapse; width: 100%;">
   <thead>
     <tr>
-      ${tableHeader("주요진행업무명")}
-      ${tableHeader("단위업무링크")}
-      ${tableHeader("담당자")}
+      ${tableHeader("")}
+      ${tableHeader("등록일(월)")}
+      ${tableHeader("주요 진행중 업무 제목")}
+      ${tableHeader("업무 개요(간략)")}
+      ${tableHeader("진행경과")}
+      ${tableHeader("IT 담당")}
+      ${tableHeader("담당부서")}
     </tr>
   </thead>
   <tbody>
-    ${rows.map(item => `
     <tr>
-      ${tableCell(item.mainWorkName)}
-      ${tableCell(item.unitWorkLink || "등록 후 자동 입력됩니다")}
-      ${tableCell(item.owner)}
-    </tr>`).join("")}
+      ${tableCell(mainProgressWork.workGroup)}
+      ${tableCell("")}
+      ${tableCell("")}
+      ${tableCell("")}
+      ${tableCell("")}
+      ${tableCell("")}
+      ${tableCell("")}
+    </tr>
+    ${mainProgressWork.rows.map(item => buildMainProgressRowHtml(item)).join("")}
+  </tbody>
+</table>
+  `.trim();
+}
+
+function normalizeTableText(value: string) {
+  return value
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, "")
+    .normalize("NFC")
+    .toLocaleLowerCase("ko-KR");
+}
+
+function getTableBodyContent(tableHtml: string) {
+  return tableHtml.match(/<tbody\b[^>]*>([\s\S]*?)<\/tbody>/i)?.[1] || tableHtml;
+}
+
+function getFirstBodyRowText(tableHtml: string) {
+  const body = getTableBodyContent(tableHtml);
+  return body.match(/<tr\b[^>]*>([\s\S]*?)<\/tr>/i)?.[1] || "";
+}
+
+function tableMatchesWorkGroup(tableHtml: string, workGroup: string) {
+  const rowText = normalizeTableText(getFirstBodyRowText(tableHtml));
+  const groupText = normalizeTableText(workGroup);
+
+  if (!rowText || !groupText) return false;
+  return rowText === groupText || rowText.includes(groupText) || groupText.includes(rowText);
+}
+
+function appendRowToTable(tableHtml: string, rowHtml: string) {
+  if (/<\/tbody>/i.test(tableHtml)) {
+    return tableHtml.replace(/<\/tbody>/i, `${rowHtml}\n  </tbody>`);
+  }
+
+  return tableHtml.replace(/<\/table>/i, `${rowHtml}\n</table>`);
+}
+
+function buildMainProgressAppendTable(mainProgressWork: MainProgressWork) {
+  return `
+<table style="border-collapse: collapse; width: 100%;">
+  <thead>
+    <tr>
+      ${tableHeader("")}
+      ${tableHeader("등록일(월)")}
+      ${tableHeader("주요 진행중 업무 제목")}
+      ${tableHeader("업무 개요(간략)")}
+      ${tableHeader("진행경과")}
+      ${tableHeader("IT 담당")}
+      ${tableHeader("담당부서")}
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      ${tableCell(mainProgressWork.workGroup)}
+      ${tableCell("")}
+      ${tableCell("")}
+      ${tableCell("")}
+      ${tableCell("")}
+      ${tableCell("")}
+      ${tableCell("")}
+    </tr>
+    ${mainProgressWork.rows.map(row => buildMainProgressRowHtml(row)).join("")}
   </tbody>
 </table>
   `.trim();
@@ -212,11 +324,17 @@ function buildConfluenceUrl(config: ConfluenceConfig, path: string) {
   return `https://${config.domain}${path}`;
 }
 
+function buildConfluenceWebUrl(config: ConfluenceConfig, path: string) {
+  if (!path) return buildConfluenceUrl(config, "/wiki");
+  if (/^https?:\/\//i.test(path)) return path;
+  return buildConfluenceUrl(config, path.startsWith("/wiki") ? path : `/wiki${path}`);
+}
+
 function buildPageResult(config: ConfluenceConfig, data: { id: string; title: string; _links?: { webui?: string } }) {
   return {
     id: data.id,
     title: data.title,
-    url: buildConfluenceUrl(config, `/wiki${data._links?.webui || ""}`),
+    url: buildConfluenceWebUrl(config, data._links?.webui || ""),
     spaceKey: config.spaceKey,
   };
 }
@@ -301,7 +419,7 @@ export async function createConfluencePage(input: {
   return {
     id: data.id,
     title: finalTitle,
-    url: buildConfluenceUrl(config, `/wiki${data._links.webui}`),
+    url: buildConfluenceWebUrl(config, data._links.webui),
   };
 }
 
@@ -326,6 +444,117 @@ export async function getConfluencePageById(pageId: string): Promise<ConfluenceP
 
   const data = await response.json();
   return buildPageResult(config, data);
+}
+
+async function getConfluencePageStorageById(config: ConfluenceConfig, pageId: string): Promise<ConfluenceStoragePage> {
+  const auth = Buffer.from(`${config.email}:${config.apiToken}`).toString("base64");
+  const response = await fetch(
+    buildConfluenceUrl(config, `/wiki/rest/api/content/${encodeURIComponent(pageId)}?expand=body.storage,version`),
+    {
+      headers: {
+        Authorization: `Basic ${auth}`,
+        Accept: "application/json",
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await readConfluenceError(response);
+    throw new ConfluenceError(
+      response.status,
+      "주요진행업무 페이지를 불러오지 못했습니다. 페이지 권한을 확인해주세요.",
+      { status: response.status, message: errorData.message }
+    );
+  }
+
+  return response.json();
+}
+
+async function updateConfluencePageStorage(config: ConfluenceConfig, page: ConfluenceStoragePage, html: string) {
+  const auth = Buffer.from(`${config.email}:${config.apiToken}`).toString("base64");
+  const response = await fetch(
+    buildConfluenceUrl(config, `/wiki/rest/api/content/${encodeURIComponent(page.id)}`),
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        id: page.id,
+        type: "page",
+        title: page.title,
+        version: { number: page.version.number + 1 },
+        body: {
+          storage: {
+            value: html,
+            representation: "storage",
+          },
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await readConfluenceError(response);
+    const message = response.status === 409
+      ? "Confluence 페이지 업데이트 중 버전 충돌이 발생했습니다. 페이지를 새로고침한 후 다시 시도해주세요."
+      : "주요진행업무 페이지 수정에 실패했습니다. 페이지 권한 또는 버전 충돌 여부를 확인해주세요.";
+
+    throw new ConfluenceError(
+      response.status,
+      message,
+      { status: response.status, message: errorData.message }
+    );
+  }
+
+  const data = await response.json();
+  return {
+    id: data.id,
+    title: data.title,
+    url: buildConfluenceWebUrl(config, data._links?.webui || ""),
+  };
+}
+
+function appendMainProgressRowsToStorage(storageHtml: string, mainProgressWork: MainProgressWork) {
+  const rowsHtml = mainProgressWork.rows.map(row => buildMainProgressRowHtml(row)).join("");
+  const tableRegex = /<table\b[\s\S]*?<\/table>/gi;
+  let matched = false;
+
+  const nextHtml = storageHtml.replace(tableRegex, tableHtml => {
+    if (matched || !tableMatchesWorkGroup(tableHtml, mainProgressWork.workGroup)) {
+      return tableHtml;
+    }
+
+    matched = true;
+    return appendRowToTable(tableHtml, rowsHtml);
+  });
+
+  if (matched) return nextHtml;
+
+  const newTable = buildMainProgressAppendTable(mainProgressWork);
+  return `${storageHtml}${storageHtml.trim() ? "\n" : ""}${newTable}`;
+}
+
+export async function appendMainProgressWorkToPage(input: {
+  pageId: string;
+  mainProgressWork: MainProgressWork;
+}): Promise<CreatedConfluencePage> {
+  const config = getConfluenceConfig();
+  const page = await getConfluencePageStorageById(config, input.pageId);
+  const storageHtml = page.body?.storage?.value;
+
+  if (typeof storageHtml !== "string") {
+    throw new ConfluenceError(
+      500,
+      "선택한 주요진행업무 페이지의 테이블 구조를 해석하지 못했습니다.",
+      { pageId: input.pageId }
+    );
+  }
+
+  const nextHtml = appendMainProgressRowsToStorage(storageHtml, input.mainProgressWork);
+  return updateConfluencePageStorage(config, page, nextHtml);
 }
 
 async function getCurrentUser(config: ConfluenceConfig) {
@@ -375,15 +604,56 @@ async function getSpace(config: ConfluenceConfig) {
   });
 }
 
-export async function searchConfluencePages(query: string, limit = 10): Promise<ConfluencePageResult[]> {
-  const config = getConfluenceConfig();
-  const auth = Buffer.from(`${config.email}:${config.apiToken}`).toString("base64");
-  const escaped = query.trim().replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  const cql = escaped
-    ? `space="${config.spaceKey}" AND type=page AND title ~ "${escaped}" ORDER BY lastmodified DESC`
-    : `space="${config.spaceKey}" AND type=page ORDER BY lastmodified DESC`;
+function normalizeSearchText(value: string) {
+  return value
+    .normalize("NFC")
+    .toLocaleLowerCase("ko-KR")
+    .replace(/\s+/g, "");
+}
+
+function toPageResults(config: ConfluenceConfig, items: ConfluenceSearchItem[]) {
+  const pages: ConfluencePageResult[] = [];
+
+  for (const item of items) {
+    const id = item.content?.id || item.id;
+    const title = item.content?.title || item.title;
+    const webui = item.content?._links?.webui || item._links?.webui || item.url || "";
+
+    if (!id || !title) continue;
+
+    pages.push({
+      id,
+      title,
+      url: buildConfluenceWebUrl(config, webui),
+      spaceKey: config.spaceKey,
+    });
+  }
+
+  return pages;
+}
+
+function mergePages(pages: ConfluencePageResult[]) {
+  const seen = new Set<string>();
+  const merged: ConfluencePageResult[] = [];
+
+  for (const page of pages) {
+    if (seen.has(page.id)) continue;
+    seen.add(page.id);
+    merged.push(page);
+  }
+
+  return merged;
+}
+
+async function fetchSpacePages(config: ConfluenceConfig, auth: string, limit: number, start: number) {
+  const params = new URLSearchParams({
+    spaceKey: config.spaceKey,
+    type: "page",
+    limit: String(limit),
+    start: String(start),
+  });
   const response = await fetch(
-    buildConfluenceUrl(config, `/wiki/rest/api/search?cql=${encodeURIComponent(cql)}&limit=${limit}`),
+    buildConfluenceUrl(config, `/wiki/rest/api/content?${params.toString()}`),
     {
       headers: {
         Authorization: `Basic ${auth}`,
@@ -402,24 +672,59 @@ export async function searchConfluencePages(query: string, limit = 10): Promise<
   }
 
   const data = await response.json() as { results?: ConfluenceSearchItem[] };
-  const pages: ConfluencePageResult[] = [];
+  return toPageResults(config, data.results || []);
+}
 
-  for (const item of data.results || []) {
-    const id = item.content?.id || item.id;
-    const title = item.content?.title || item.title;
-    const webui = item.content?._links?.webui || item._links?.webui || item.url || "";
+async function searchPagesByCql(config: ConfluenceConfig, auth: string, query: string, limit: number) {
+  const escaped = query.trim().replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  if (!escaped) return [];
 
-    if (!id || !title) continue;
+  const cql = `space="${config.spaceKey}" AND type=page AND title ~ "${escaped}*" ORDER BY lastmodified DESC`;
+  const response = await fetch(
+    buildConfluenceUrl(config, `/wiki/rest/api/search?cql=${encodeURIComponent(cql)}&limit=${limit}`),
+    {
+      headers: {
+        Authorization: `Basic ${auth}`,
+        Accept: "application/json",
+      },
+    }
+  );
 
-    pages.push({
-      id,
-      title,
-      url: buildConfluenceUrl(config, `/wiki${webui}`),
-      spaceKey: config.spaceKey,
-    });
+  if (!response.ok) return [];
+
+  const data = await response.json() as { results?: ConfluenceSearchItem[] };
+  return toPageResults(config, data.results || []);
+}
+
+export async function searchConfluencePages(query: string, limit = 50, start = 0): Promise<ConfluencePageResult[]> {
+  const config = getConfluenceConfig();
+  const auth = Buffer.from(`${config.email}:${config.apiToken}`).toString("base64");
+  const safeLimit = Math.min(Math.max(limit, 1), 100);
+  const safeStart = Math.max(start, 0);
+  const searchText = query.trim();
+  const normalizedQuery = normalizeSearchText(searchText);
+
+  if (!normalizedQuery) {
+    return fetchSpacePages(config, auth, safeLimit, safeStart);
   }
 
-  return pages;
+  const matches: ConfluencePageResult[] = [];
+  let offset = 0;
+  const batchLimit = 100;
+  const maxScannedPages = 500;
+
+  while (matches.length < safeLimit && offset < maxScannedPages) {
+    const pages = await fetchSpacePages(config, auth, batchLimit, offset);
+    if (pages.length === 0) break;
+
+    matches.push(...pages.filter(page => normalizeSearchText(page.title).includes(normalizedQuery)));
+    offset += pages.length;
+
+    if (pages.length < batchLimit) break;
+  }
+
+  const cqlMatches = await searchPagesByCql(config, auth, searchText, safeLimit);
+  return mergePages([...matches, ...cqlMatches]).slice(0, safeLimit);
 }
 
 export async function checkConfluenceConnection(parentPageId?: string): Promise<ConfluenceConnectionStatus> {

@@ -7,7 +7,15 @@ import Modal from "./Modal";
 import { useRouter } from "next/navigation";
 
 interface ArchiveListProps {
-  initialMeetings: any[];
+  initialMeetings: Array<{
+    id: string;
+    title?: string;
+    sourceType?: string;
+    meetingDate?: string;
+    createdAt?: string;
+    participants?: Array<unknown>;
+    asis?: string;
+  }>;
 }
 
 export default function ArchiveList({ initialMeetings }: ArchiveListProps) {
@@ -52,10 +60,10 @@ export default function ArchiveList({ initialMeetings }: ArchiveListProps) {
           
           setMeetings(prev => prev.filter(m => m.id !== id));
           router.refresh();
-        } catch (err: any) {
+        } catch (err: unknown) {
           showModal({
             title: "오류 발생",
-            message: err.message,
+            message: err instanceof Error ? err.message : "삭제에 실패했습니다.",
             type: "error"
           });
         } finally {
@@ -90,7 +98,7 @@ export default function ArchiveList({ initialMeetings }: ArchiveListProps) {
               </div>
               <div className="flex gap-2">
                 <button 
-                  onClick={() => handleDelete(m.id, m.title)}
+                  onClick={() => handleDelete(m.id, m.title || "제목 없는 회의")}
                   disabled={isDeleting === m.id}
                   className="p-2 bg-white/5 hover:bg-red-500/20 text-white/60 hover:text-red-400 rounded-xl transition-all border border-white/10 flex items-center gap-2 text-xs font-bold"
                   title="회의록 삭제"
@@ -120,7 +128,7 @@ export default function ArchiveList({ initialMeetings }: ArchiveListProps) {
                 <Calendar className="w-4 h-4" />
                 <span>
                   {(() => {
-                    const d = new Date(m.meetingDate || m.createdAt);
+                    const d = new Date(m.meetingDate || m.createdAt || Date.now());
                     return `${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}.`;
                   })()}
                 </span>
