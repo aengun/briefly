@@ -1,8 +1,119 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 
+export const runtime = 'nodejs';
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const meeting = await prisma.meeting.findUnique({
+      where: { id },
+      include: {
+        participants: true,
+        transcript: true,
+        schedule: true
+      }
+    });
+
+    if (!meeting) {
+      return NextResponse.json({ error: "회의록을 찾을 수 없습니다." }, { status: 404 });
+    }
+
+    return NextResponse.json({
+      ...meeting,
+      summary: {
+        asis: meeting.asis,
+        tobe: meeting.tobe,
+        expected_effects: meeting.expected_effects,
+        schedule: meeting.schedule
+      }
+    });
+  } catch (error: unknown) {
+    console.error("GET meeting error:", error);
+    return NextResponse.json({ error: "회의록을 불러오지 못했습니다." }, { status: 500 });
+  }
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const body = await request.json();
+
+    // Validate meetingDate
+    let mDate: Date | undefined = undefined;
+    if (body.meetingDate) {
+      const parsed = new Date(body.meetingDate);
+      if (!isNaN(parsed.getTime())) {
+        mDate = parsed;
+      }
+    }
+
+    const meeting = await prisma.meeting.update({
+      where: { id },
+      data: {
+        title: body.title,
+        sourceType: body.sourceType,
+        meetingDate: mDate,
+        audioUrl: body.audioUrl,
+        asis: body.summary?.asis,
+        tobe: body.summary?.tobe,
+        expected_effects: body.summary?.expected_effects,
+        participants: body.participants ? {
+          deleteMany: {},
+          create: body.participants.map((p: any) => ({
+            team: p.team || "미지정",
+            name: p.name || "이름 없음"
+          }))
+        } : undefined,
+        transcript: body.transcript ? {
+          deleteMany: {},
+          create: body.transcript.map((t: any) => ({
+            speaker: t.speaker || "알 수 없음",
+            text: t.text || ""
+          }))
+        } : undefined,
+        schedule: body.summary?.schedule ? {
+          deleteMany: {},
+          create: body.summary.schedule.map((s: any) => ({
+            task: s.task || "",
+            assignee: s.assignee || "",
+            dueDate: s.dueDate || ""
+          }))
+        } : undefined
+      },
+      include: {
+        participants: true,
+        transcript: true,
+        schedule: true
+      }
+    });
+
+    return NextResponse.json({
+      success: true,
+      meeting: {
+        ...meeting,
+        summary: {
+          asis: meeting.asis,
+          tobe: meeting.tobe,
+          expected_effects: meeting.expected_effects,
+          schedule: meeting.schedule
+        }
+      }
+    });
+  } catch (error: unknown) {
+    console.error("PATCH meeting error:", error);
+    return NextResponse.json({ error: "회의록 수정에 실패했습니다." }, { status: 500 });
+  }
+}
+
 export async function DELETE(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -13,8 +124,8 @@ export async function DELETE(
     });
 
     return NextResponse.json({ success: true });
-  } catch (error: any) {
-    console.error("Delete meeting error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    console.error("DELETE meeting error:", error);
+    return NextResponse.json({ error: "회의록 삭제에 실패했습니다." }, { status: 500 });
   }
 }
