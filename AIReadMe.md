@@ -79,3 +79,104 @@
 - 수정 내용: `/api/summarize`에 단계별 `errorCode`, `userMessage`, `debugId` 응답을 추가하고, 클라이언트는 서버가 준 안전한 메시지를 우선 표시하도록 변경했다. MIME type 미확인 파일에 대한 명시적 검증과 설정 누락에 대한 조기 오류도 추가했다. 모델 목록은 2.5 계열(`gemini-2.5-flash`, `gemini-2.5-flash-lite`)로 교체했다.
 - 아직 남은 의심 지점: 외부 Gemini 업로드/전사 실패와 JSON 파싱 실패의 실제 비율은 아직 수집하지 못했다. 다음에는 서버 로그의 `debugId` 기준으로 단계별 오류 빈도를 확인해야 한다.
 - 다음 명령에서 참고할 내용: 업로드 오류가 다시 나오면 서버 응답의 `errorCode`와 `debugId`를 먼저 확인하고, `CONFIG_ERROR`/`UPLOAD_TOO_LARGE`/`UNSUPPORTED_FILE_TYPE`/`TRANSCRIPTION_FAILED`/`PARSE_FAILED`/`TIMEOUT` 중 어디인지부터 분기해야 한다. 모델 404가 보이면 deprecated model alias 사용 여부를 먼저 확인한다.
+- 날짜: 2026-05-07
+- 발생 화면: 녹화파일 업로드 후 회의록 분석 화면
+- 사용자에게 표시된 메시지: `회의록 분석 결과 형식이 맞지 않았습니다. 잠시 후 다시 시도해주세요.`
+- 실제 오류 원인: Gemini 응답을 서버가 자유문자열에서 JSON으로 추출하는 구조가 취약해서, 모델이 코드펜스/설명문을 섞거나 형식이 어긋나면 `PARSE_FAILED`가 발생했다.
+- 관련 파일: `src/app/api/summarize/route.ts`, `src/app/page.tsx`
+- 관련 함수/API: `POST /api/summarize`, `extractJSON`, `parseStructuredResponse`, `buildStructuredGenerationConfig`
+- 재현 방법: 요약/전사 응답이 JSON 규격을 벗어나거나 빈 응답이 섞일 때 파싱 실패가 발생함
+- 수정 여부: 수정함
+- 수정 내용: Gemini 모델 우선순위를 `gemini-2.5-pro` -> `gemini-2.5-flash` -> `gemini-2.5-flash-lite`로 올리고, `responseMimeType: application/json`과 `responseSchema`를 걸어 구조화 출력을 강제했다. 프롬프트 전후 파싱도 `parseStructuredResponse`로 정리했다.
+- 아직 남은 의심 지점: 외부 모델이 JSON 스키마를 완전히 지키지 않는 경우가 남을 수 있으므로, 실패 시 `debugId`와 단계별 로그를 계속 확인해야 한다.
+- 다음 명령에서 참고할 내용: `PARSE_FAILED`가 다시 나오면 transcript 단계인지 summary 단계인지 로그의 `modelName`/`debugId`로 먼저 구분한다. 구조화 출력이 흔들리면 최종적으로는 AI 응답 재포맷 1회 재시도나 function-call 방식 전환을 고려한다.
+- 날짜: 2026-05-07
+- 발생 화면: 파일 업로드 분석
+- 사용자에게 표시된 오류: 업로드 분석 실패, 분석 결과 해석 실패, 또는 장시간 응답 없음
+- 실제 원인 또는 의심 원인: 파일 형식 검증이 `audio/*`/`video/*`만 명확히 제한하지 않았고, Gemini 응답을 기다리는 단계에 서버 타임아웃이 없어 큰 샘플 음성에서 요청이 90초 이상 대기할 수 있었다. JSON 구조화 출력은 적용되어 있었지만 모델 순서가 `2.5-pro` 우선이면 시연 속도 리스크가 컸다.
+- 관련 파일: `src/app/api/summarize/route.ts`, `src/app/page.tsx`
+- 관련 함수/API: `POST /api/summarize`, `resolveUploadMimeType`, `withTimeout`, `buildStructuredGenerationConfig`, `handleUpload`
+- 수정 내용: 서버에서 `audio/*`/`video/*` 또는 허용 확장자만 통과하도록 변경했다. Gemini 파일 업로드/전사/요약 호출에 60초 타임아웃을 추가했다. 모델 순서는 시연 속도 우선으로 `gemini-2.5-flash-lite` -> `gemini-2.5-flash` -> `gemini-2.5-pro`로 조정했다. 클라이언트에는 `파일 확인 중`, `대화 내용 변환 중`, `회의 내용 분석 중`, `회의록 저장 중` 단계 표시를 추가했다.
+- 남은 위험 요소: 큰 음성 파일은 Gemini 파일 처리 자체가 오래 걸릴 수 있다. 시연에는 1~3분 이내의 명확한 음성 파일을 우선 사용한다.
+- 시연 전 확인해야 할 테스트: 정상 m4a/mp4 1개로 `/api/summarize`가 60초 내 응답하는지 확인한다. `UNSUPPORTED_FILE_TYPE`, `INSUFFICIENT_MEETING_CONTENT`, `TIMEOUT` 응답이 한국어로 표시되는지 확인한다.
+- 다음 명령에서 참고할 내용: 정상 파일 분석이 오래 걸리면 서버 로그의 `[summarize] debugId`, `stage`, `errorCode`를 먼저 본다. `TIMEOUT`이면 파일 길이/크기를 줄이고 재시도한다.
+- 날짜: 2026-05-07
+- 발생 화면: 직접 녹음 분석
+- 사용자에게 표시된 오류: 녹음 분석 실패 또는 분석 가능한 내용 부족
+- 실제 원인 또는 의심 원인: 직접 녹음도 업로드와 같은 `/api/summarize` 경로를 사용하므로 공통 AI 대기/파싱/내용 부족 문제가 동일하게 영향을 준다. 빈 blob 또는 1KB 미만 녹음은 시스템 오류가 아니라 분석 부족 상태로 처리해야 한다.
+- 관련 파일: `src/app/page.tsx`, `src/app/api/summarize/route.ts`, `src/lib/analysis-guard.ts`
+- 관련 함수/API: `handleUpload`, `validateAnalyzableContent`, `POST /api/summarize`
+- 수정 내용: 직접 녹음 파일 크기가 너무 작으면 서버 호출 전에 한국어 안내를 표시한다. 서버에서도 1KB 미만 파일은 `INSUFFICIENT_MEETING_CONTENT`로 반환한다. 업로드와 녹음이 같은 단계 표시와 오류 메시지 체계를 사용하도록 맞췄다.
+- 남은 위험 요소: 브라우저 Blob URL은 새로고침 후 유지되지 않는다. 시연 중에는 녹음 직후 분석/저장 흐름을 사용한다.
+- 시연 전 확인해야 할 테스트: 10초 이하 테스트 녹음은 부족 안내가 떠야 하고, 충분한 실제 대화 녹음은 분석 후 저장되어야 한다.
+- 다음 명령에서 참고할 내용: 직접 녹음 오류는 먼저 blob 크기와 `/api/summarize`의 `errorCode`를 확인한다.
+- 날짜: 2026-05-07
+- 발생 화면: 회의록 저장 / 회의록 보관소
+- 사용자에게 표시된 오류: `회의록 저장 중 오류가 발생했습니다.`
+- 실제 원인 또는 의심 원인: `Transcript.start/end` 컬럼을 추가한 뒤 dev 서버가 오래 떠 있으면 이전 Prisma Client/서버 상태로 저장 API가 동작해 500이 날 수 있었다. 또한 저장 API가 payload 구조를 방어적으로 정규화하지 않아 `participants`, `transcript`, `schedule` 중 하나가 배열이 아니면 저장 중 예외가 날 수 있었다.
+- 관련 파일: `prisma/schema.prisma`, `src/lib/meeting-record.ts`, `src/app/api/meetings/route.ts`, `src/app/api/meetings/[id]/route.ts`, `src/app/page.tsx`, `src/components/MeetingDetailClient.tsx`
+- 관련 함수/API: `POST /api/meetings`, `PATCH /api/meetings/[id]`, `normalizeMeetingRecordInput`, `persistMeetingToArchive`
+- 수정 내용: `DATABASE_URL=file:./dev.db npx prisma db push`로 DB와 Prisma Client를 동기화했다. 저장 payload 공통 정규화 함수 `normalizeMeetingRecordInput`을 추가해 업로드/녹음/상세 수정이 같은 구조로 저장되게 했다. 저장 API는 `SAVE_FAILED`, `STORAGE_UNAVAILABLE`, `INVALID_REQUEST`와 `debugId`, `stage`, `userMessage`를 반환한다. 클라이언트는 저장 실패 시 서버의 안전한 한국어 메시지를 우선 표시하고 분석 결과는 유지한다.
+- 남은 위험 요소: schema 변경 후 dev 서버를 재시작하지 않으면 이전 런타임 상태가 남을 수 있다.
+- 시연 전 확인해야 할 테스트: `npm run dev` 재시작 후 정상 분석 결과 저장, `/api/meetings` 목록 조회, `/api/meetings/[id]` 상세 조회, PATCH 저장을 확인한다.
+- 다음 명령에서 참고할 내용: 저장 오류가 다시 나오면 먼저 `DATABASE_URL=file:./dev.db npx prisma db push` 후 dev 서버를 재시작한다. 이후 `/api/meetings` 응답의 `errorCode`, `stage`, `debugId`를 확인한다.
+- 날짜: 2026-05-07
+- 발생 화면: 파일 업로드 분석 / 직접 녹음 분석
+- 사용자에게 표시된 오류: 분석 실패, 분석 결과 해석 실패, 또는 요청 지연
+- 실제 원인 또는 의심 원인: 서버 로그에서 `gemini-2.5-pro` 무료 티어 쿼터가 `0`으로 반환되었고, `gemini-2.5-flash`는 503, `gemini-2.5-flash-lite`는 긴 파일에서 타임아웃이 발생했다. 즉, 무료 티어에서 사실상 막힌 모델을 fallback 끝에 두어 전체 요청이 길어지고 실패율이 올라갔다.
+- 관련 파일: `src/app/api/summarize/route.ts`
+- 관련 함수/API: `POST /api/summarize`, `modelsToTry`, `withTimeout`, `classifyUnknownError`
+- 수정 내용: 무료 티어에서 막힌 `gemini-2.5-pro` fallback을 제거하고 `gemini-2.5-flash-lite -> gemini-2.5-flash`만 시도하도록 축소했다.
+- 남은 위험 요소: 아주 긴 음성 파일은 여전히 `flash-lite`에서 타임아웃될 수 있다. 시연용 파일은 짧고 명확한 녹음으로 제한하는 것이 안전하다.
+- 시연 전 확인해야 할 테스트: 1~3분 길이의 정상 파일 1개로 분석 성공 여부를 다시 확인한다. `429`가 더 이상 `gemini-2.5-pro`에서 반복되지 않는지 로그를 본다.
+- 다음 명령에서 참고할 내용: `POST /api/summarize`가 다시 느리면 `flash-lite` 타임아웃인지, `flash` 503인지 먼저 구분하고, 필요하면 입력 파일 길이를 줄인다.
+- 날짜: 2026-05-07
+- 발생 화면: 파일 업로드 분석 / 직접 녹음 분석
+- 사용자에게 표시된 오류: 분석 오류
+- 실제 원인 또는 의심 원인: Gemini 무료 티어에서 `gemini-2.5-pro`는 quota 0, `gemini-2.5-flash`는 503, `gemini-2.5-flash-lite`는 긴 파일에서 타임아웃이 발생해 동일 파일 2개가 연속 실패했다.
+- 관련 파일: `src/app/api/summarize/route.ts`
+- 관련 함수/API: `POST /api/summarize`, `modelsToTry`, `transcribeWithOpenAI`, `classifyUnknownError`
+- 수정 내용: Gemini 실패 시 OpenAI로 fallback 하는 경로를 추가했다. OpenAI 전사 `gpt-4o-mini-transcribe`와 요약 `gpt-5.1`을 사용하도록 코드 경로를 넣었다. 다만 현재 `.env.local`에 `OPENAI_API_KEY`는 없어서 fallback은 비활성 상태다.
+- 남은 위험 요소: OpenAI 키가 없으면 fallback이 동작하지 않는다. 시연 전 실제로 GPT 경로를 쓰려면 `OPENAI_API_KEY`를 추가해야 한다.
+- 시연 전 확인해야 할 테스트: `OPENAI_API_KEY`를 넣은 뒤 정상 음성 1개가 Gemini 실패 시 GPT로 넘어가는지 확인한다. OpenAI 키가 없을 경우에는 Gemini 경로만 동작하므로 free tier 한계를 다시 확인해야 한다.
+- 다음 명령에서 참고할 내용: GPT fallback을 실제로 쓰려면 먼저 `OPENAI_API_KEY`를 `.env.local`에 넣고 서버를 재시작한다.
+- 날짜: 2026-05-07
+- 발생 화면: 파일 업로드 분석 / 직접 녹음 분석
+- 사용자에게 표시된 오류: `분석 요청 시간이 초과되었습니다. 파일이 너무 크거나 네트워크가 불안정할 수 있습니다.`
+- 실제 원인 또는 의심 원인: `/api/summarize`에서 모든 AI 호출을 60초로 자르던 구조 때문에, 긴 음성 파일이나 느린 외부 API 응답이 정상이어도 타임아웃으로 끊길 수 있었다.
+- 관련 파일: `src/app/api/summarize/route.ts`
+- 관련 함수/API: `withTimeout`, `POST /api/summarize`, OpenAI transcription/summary fetch, Gemini `generateContent`
+- 수정 내용: Gemini 기본 타임아웃을 90초로 늘리고, OpenAI 전사/요약 호출은 180초까지 허용하도록 분리했다.
+- 남은 위험 요소: 아주 긴 파일은 여전히 실패할 수 있으므로, 시연용 파일은 1~3분 길이의 명확한 음성이 안전하다.
+- 시연 전 확인해야 할 테스트: 정상 길이 파일 1개로 `/api/summarize`가 90초/180초 제한 안에서 완료되는지 확인한다.
+- 다음 명령에서 참고할 내용: 다시 타임아웃이 나면 서버 로그의 `stage`가 `transcription`인지 `summary`인지 먼저 확인한다. OpenAI가 먼저 실패하면 Gemini fallback으로 이어지는지 로그를 본다.
+- 날짜: 2026-05-07
+- 발생 화면: 파일 업로드 분석 / 직접 녹음 분석
+- 사용자에게 표시된 오류: 분석 요청 시간이 초과되었습니다.
+- 실제 원인 또는 의심 원인: 시연 안정성을 위해 둔 90초/180초 제한도 긴 음성 파일에는 여전히 짧았다.
+- 관련 파일: `src/app/api/summarize/route.ts`
+- 관련 함수/API: `withTimeout`, `POST /api/summarize`
+- 수정 내용: Gemini 기본 타임아웃을 240초로, OpenAI 전사/요약 타임아웃을 420초로 더 늘렸다.
+- 남은 위험 요소: 너무 긴 파일은 여전히 느릴 수 있다. 시연 파일은 가능하면 5분 이내가 안전하다.
+- 시연 전 확인해야 할 테스트: 동일 파일로 분석이 4분/7분 제한 안에서 완료되는지 확인한다.
+- 다음 명령에서 참고할 내용: 타임아웃이 다시 나오면 `transcription`/`summary` 중 어느 단계인지 로그를 먼저 본다.
+- 날짜: 2026-05-07
+- 발생 화면: 파일 업로드 분석 / 직접 녹음 분석
+- 사용자에게 표시된 오류: `대화 내용 변환 중 오류가 발생했습니다. 회의록 분석 결과 형식이 맞지 않았습니다. 잠시 후 다시 시도해주세요.`
+- 실제 원인 또는 의심 원인: Gemini 전사 단계의 JSON 응답이 가끔 구조 검사를 통과하지 못해 `PARSE_FAILED: transcript`로 떨어졌다.
+- 관련 파일: `src/app/api/summarize/route.ts`
+- 관련 함수/API: `parseStructuredResponse`, `POST /api/summarize`
+- 수정 내용: Gemini 전사 파싱이 실패하면 즉시 OpenAI 전사+요약 경로로 우회하도록 추가했다. 이로써 transcript JSON 흔들림이 있어도 분석이 끊기지 않도록 했다.
+- 남은 위험 요소: OpenAI 키가 없으면 이 우회가 동작하지 않는다.
+- 시연 전 확인해야 할 테스트: 전사 파싱 실패를 유발하는 파일에서 OpenAI 우회가 실제로 응답하는지 확인한다.
+- 다음 명령에서 참고할 내용: `PARSE_FAILED: transcript`가 다시 나오면 `OpenAI transcript fallback failed after Gemini parse miss` 로그가 찍혔는지 먼저 본다.
+- 날짜: 2026-05-07
+- 발생 화면: 파일 업로드 분석 / 직접 녹음 분석
+- 사용자에게 표시된 오류: `회의 내용 분석 중 오류가 발생했습니다. 분석 요청 시간이 초과되었습니다. 파일이 너무 크거나 네트워크가 불안정할 수 있습니다.`
+- 실제 원인 또는 의심 원인: OpenAI summary가 긴 transcript를 그대로 처리하면서 `gpt-5.2` 단계에서 시간이 길어질 수 있었다. 프롬프트가 pretty JSON이라 토큰도 더 많이 쓰고 있었다.
+- 관련 파일: `src/app/api/summarize/route.ts`
+- 관련 함수/API: `summarizePromptFromTranscript`, `openai:summary`, `withTimeout`
+- 수정 내용: summary 입력 JSON을 minified로 줄이고, `gpt-5-mini`를 summary fallback으로 추가했다. OpenAI summary 타임아웃도 10분으로 늘렸다.
+- 남은 위험 요소: 여전히 매우 긴 파일은 느릴 수 있다.
+- 시연 전 확인해야 할 테스트: 긴 회의 파일 1개에서 summary가 `gpt-5.2` 또는 `gpt-5-mini`로 완료되는지 확인한다.
+- 다음 명령에서 참고할 내용: summary가 다시 타임아웃이면 `openai:summary:gpt-5.2`와 `openai:summary:gpt-5-mini` 중 어디서 끊겼는지 로그를 본다.

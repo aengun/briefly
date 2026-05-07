@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Calendar, ChevronRight, FileAudio, UsersRound, Save, Loader2, Users, UserPlus, Share2, LayoutGrid, Trash2 } from "lucide-react";
+import { Calendar, ChevronRight, UsersRound, Save, Loader2, Users, UserPlus, Share2, LayoutGrid, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Modal from "./Modal";
+import TranscriptPlayer, { type TranscriptJumpTarget } from "./TranscriptPlayer";
+import VisualizationPopup from "./VisualizationPopup";
 import WorkProgressModal from "./WorkProgressModal";
 import { validateAnalyzableContent } from "@/lib/analysis-guard";
 
@@ -17,6 +19,10 @@ type TranscriptUtterance = {
   id: string;
   speaker: string;
   text: string;
+  start?: number;
+  end?: number;
+  startTime?: number;
+  endTime?: number;
 };
 
 type ScheduleItem = {
@@ -67,6 +73,8 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
   const [isSendingToConfluence, setIsSendingToConfluence] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [showTaskTemplate, setShowTaskTemplate] = useState(false);
+  const [showVisualizationPopup, setShowVisualizationPopup] = useState(false);
+  const [transcriptJumpTarget, setTranscriptJumpTarget] = useState<TranscriptJumpTarget | null>(null);
 
   // For participant management
   const [newTeam, setNewTeam] = useState("");
@@ -173,9 +181,11 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
         })
       });
 
-      if (!res.ok) throw new Error(await res.text());
-      
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.userMessage || data?.error || "회의록 저장에 실패했습니다. 저장소 또는 서버 연결 상태를 확인해주세요.");
+      }
+
       setMeeting(data.meeting);
       setIsEditMode(false);
       showModal({
@@ -368,6 +378,14 @@ ${renderAsList(meeting.expected_effects)}
                 >
                   <LayoutGrid className="w-5 h-5" />
                   일감진행
+                </button>
+                <button
+                  onClick={() => setShowVisualizationPopup(true)}
+                  disabled={meeting.transcript.length === 0 && !meeting.asis.trim() && !meeting.tobe.trim() && !meeting.expected_effects.trim()}
+                  className="bg-gradient-to-r from-cyan-500 to-sky-500 hover:from-cyan-400 hover:to-sky-400 text-white px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg border border-white/10 flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <LayoutGrid className="w-5 h-5" />
+                  회의내용 도식화
                 </button>
                 <button
                   onClick={handleSendToConfluence}
@@ -634,40 +652,34 @@ ${renderAsList(meeting.expected_effects)}
           </div>
         </div>
 
-        {/* 오디오 및 회의록 (하단 배치) */}
         <div className="w-full flex flex-col gap-6">
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-xl shadow-2xl flex flex-col">
-            <h3 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-400 flex items-center gap-2 mb-6">
-              <FileAudio className="w-6 h-6 text-cyan-400" />
-              회의록 (전문)
-            </h3>
-
-            {meeting.audioUrl && (
-              <div className="mb-6 p-4 bg-white/5 rounded-2xl border border-white/10 flex flex-col items-center">
-                <audio controls className="w-full grayscale invert opacity-90" src={meeting.audioUrl} />
-              </div>
-            )}
-
-
-            <div className="overflow-y-auto pr-4 space-y-4 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent pb-10 max-h-[600px]">
-              {meeting.transcript.length > 0 ? (
-                meeting.transcript.map((u, i) => (
-                  <div key={i} className="flex flex-col gap-1 p-3 bg-white/[0.03] rounded-xl border border-white/5">
-                    <span className="text-xs font-bold text-fuchsia-300">
-                      {u.speaker}
-                    </span>
-                    <p className="text-white/90 text-sm leading-relaxed">{u.text}</p>
-                  </div>
-                ))
-              ) : (
-                <div className="py-8 text-center text-white/30 text-sm">대화 내역이 없습니다.</div>
-              )}
-            </div>
-          </div>
+          <TranscriptPlayer
+            audioUrl={meeting.audioUrl}
+            transcript={meeting.transcript}
+            title="대화 원문"
+            emptyMessage="대화 원문을 불러올 수 없습니다."
+            jumpTarget={transcriptJumpTarget}
+          />
         </div>
       </div>
 
     </div>
+
+      <VisualizationPopup
+        isOpen={showVisualizationPopup}
+        onClose={() => setShowVisualizationPopup(false)}
+        transcript={meeting.transcript}
+        summary={{
+          asis: meeting.asis,
+          tobe: meeting.tobe,
+          expected_effects: meeting.expected_effects,
+          schedule: meeting.schedule,
+        }}
+        onJump={index => setTranscriptJumpTarget(previous => ({
+          index,
+          nonce: (previous?.nonce || 0) + 1,
+        }))}
+      />
 
       <WorkProgressModal
         isOpen={showTaskTemplate}

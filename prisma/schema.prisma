@@ -34,6 +34,8 @@ model Transcript {
   id        String  @id @default(uuid())
   speaker   String
   text      String
+  start     Float?
+  end       Float?
   meetingId String
   meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 }

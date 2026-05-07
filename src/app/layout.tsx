@@ -33,9 +33,6 @@ export default function RootLayout({
                 <Database className="w-4 h-4" />
                 회의록 보관소
               </Link>
-              <div className="text-sm font-medium text-purple-200 bg-purple-900/40 px-4 py-2 rounded-full ring-1 ring-purple-500/30 hidden sm:block">
-                사내 회의록 분석
-              </div>
             </div>
           </div>
         </header>

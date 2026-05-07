@@ -893,6 +893,7 @@ export default function WorkProgressModal({
               </div>
             </section>
           )}
+
         </div>
 
         <div className="flex flex-col gap-2 border-t border-white/10 bg-white/[0.03] px-5 py-3 sm:flex-row sm:items-center sm:justify-end sm:px-6">

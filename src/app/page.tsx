@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { UploadCloud, FileAudio, Loader2, CheckCircle2, ChevronRight, Users, UserPlus, Save, Mic, MicOff, Square, Play, LayoutGrid, FileText } from "lucide-react";
+import { UploadCloud, FileAudio, Loader2, CheckCircle2, ChevronRight, Save, Mic, MicOff, Square, Play, LayoutGrid } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Modal from "../components/Modal";
+import TranscriptPlayer, { type TranscriptJumpTarget } from "../components/TranscriptPlayer";
+import VisualizationPopup from "../components/VisualizationPopup";
 import WorkProgressModal from "../components/WorkProgressModal";
 import { validateAnalyzableContent } from "@/lib/analysis-guard";
 
@@ -15,8 +17,13 @@ type ScheduleItem = {
 };
 
 type TranscriptUtterance = {
+  id?: string;
   speaker: string;
   text: string;
+  start?: number;
+  end?: number;
+  startTime?: number;
+  endTime?: number;
 };
 
 type SourceType = "upload" | "realtime";
@@ -45,6 +52,13 @@ type AnalysisErrorCode =
   | "CONFIG_ERROR"
   | "UNKNOWN_ERROR";
 
+type AppErrorCode =
+  | AnalysisErrorCode
+  | "SAVE_FAILED"
+  | "STORAGE_UNAVAILABLE"
+  | "NORMALIZE_FAILED"
+  | "NETWORK_ERROR";
+
 type SummaryApiResponse = Partial<SummaryResult> & {
   usedModel?: string;
   error?: string;
@@ -57,8 +71,19 @@ type SummaryApiResponse = Partial<SummaryResult> & {
 };
 
 type SummaryApiError = Error & {
-  code?: AnalysisErrorCode;
+  code?: AppErrorCode;
   userMessage?: string;
+  debugId?: string;
+  stage?: string;
+};
+
+type SaveApiResponse = {
+  success?: boolean;
+  meeting?: SavedMeeting;
+  error?: string;
+  message?: string;
+  userMessage?: string;
+  errorCode?: string;
   debugId?: string;
   stage?: string;
 };
@@ -69,17 +94,31 @@ export type Participant = {
   name: string;
 };
 
-type TeamMember = {
-  id: string;
-  team: string;
-  name: string;
-};
-
 type SavedMeeting = {
   id: string;
 };
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+const getStageLabel = (stage?: string) => {
+  if (stage === "request") return "파일 확인 중";
+  if (stage === "upload") return "파일 업로드 중";
+  if (stage === "transcription") return "대화 내용 변환 중";
+  if (stage === "summary") return "회의 내용 분석 중";
+  if (stage === "save") return "회의록 저장 중";
+  if (stage === "read") return "회의록 조회 중";
+  return "";
+};
+
+const buildSaveError = (data: SaveApiResponse | null) => {
+  const message = data?.userMessage || data?.error || data?.message || "회의록 저장에 실패했습니다. 저장소 또는 서버 연결 상태를 확인해주세요.";
+  const error = new Error(message) as SummaryApiError;
+  error.code = (data?.errorCode || "SAVE_FAILED") as AppErrorCode;
+  error.userMessage = message;
+  error.debugId = data?.debugId;
+  error.stage = data?.stage || "save";
+  return error;
+};
 
 const buildSummaryApiError = (
   response: Response,
@@ -102,7 +141,7 @@ const buildSummaryApiError = (
       ? "녹음된 내용이 부족해 회의록을 생성할 수 없습니다. 회의 분석을 위해 더 충분한 대화 내용을 녹음해주세요."
       : "분석 가능한 회의 내용이 부족합니다. 업로드한 파일에서 충분한 회의 내용을 찾지 못했습니다.",
     AI_ANALYSIS_FAILED: "회의록 분석 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
-    PARSE_FAILED: "회의록 분석 결과를 해석하지 못했습니다. 잠시 후 다시 시도해주세요.",
+    PARSE_FAILED: "회의록 분석 결과 형식이 맞지 않았습니다. 잠시 후 다시 시도해주세요.",
     TIMEOUT: "분석 요청 시간이 초과되었습니다. 파일이 너무 크거나 네트워크가 불안정할 수 있습니다.",
     CONFIG_ERROR: "분석 서비스 설정에 문제가 있습니다. 관리자에게 문의해주세요.",
     UNKNOWN_ERROR: "분석 중 오류가 발생했습니다. 오류 원인을 기록했으며, 관리자 확인이 필요합니다.",
@@ -130,9 +169,12 @@ const buildSummaryApiError = (
 const normalizeSummaryResult = (value: Partial<SummaryResult>): SummaryResult => ({
   audioUrl: value.audioUrl || "",
   transcript: Array.isArray(value.transcript)
-    ? value.transcript.map((item) => ({
+    ? value.transcript.map((item, index) => ({
+      id: item?.id || `seg-${index + 1}`,
       speaker: item?.speaker || "알 수 없음",
-      text: item?.text || ""
+      text: item?.text || "",
+      start: typeof item?.start === "number" ? item.start : typeof item?.startTime === "number" ? item.startTime : undefined,
+      end: typeof item?.end === "number" ? item.end : typeof item?.endTime === "number" ? item.endTime : undefined,
     }))
     : [],
   summary: {
@@ -163,16 +205,13 @@ export default function Home() {
   const [result, setResult] = useState<SummaryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Participant Management
-  const [participants, setParticipants] = useState<Participant[]>([]);
-  const [newTeam, setNewTeam] = useState("");
-  const [newName, setNewName] = useState("");
+  const [participants] = useState<Participant[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [analysisTime, setAnalysisTime] = useState(0);
+  const [analysisStage, setAnalysisStage] = useState("");
   const analysisTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [meetingTitle, setMeetingTitle] = useState("");
   const [meetingDate, setMeetingDate] = useState("");
-  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [savedMeetingId, setSavedMeetingId] = useState<string | null>(null);
   const [resultSourceType, setResultSourceType] = useState<SourceType>("upload");
   const [archiveStatusMessage, setArchiveStatusMessage] = useState<string | null>(null);
@@ -217,21 +256,13 @@ export default function Home() {
   const animationFrameRef = useRef<number | null>(null);
 
   const [showTaskTemplate, setShowTaskTemplate] = useState(false);
+  const [transcriptJumpTarget, setTranscriptJumpTarget] = useState<TranscriptJumpTarget | null>(null);
+  const [showVisualizationPopup, setShowVisualizationPopup] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Prevent Hydration mismatch by setting initial date on client only
   useEffect(() => {
     setMeetingDate(new Date().toISOString().split('T')[0]);
-    
-    // Fetch team members from DB
-    fetch("/api/team-members")
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          setTeamMembers(data);
-        }
-      })
-      .catch(err => console.error("Failed to fetch team members:", err));
   }, []);
 
   // Cleanup on unmount
@@ -342,23 +373,6 @@ export default function Home() {
     setArchiveErrorMessage(null);
   };
 
-  const handleAddParticipant = () => {
-    if (!newTeam || !newName) return;
-    const newP = { id: crypto.randomUUID(), team: newTeam, name: newName };
-    setParticipants([...participants, newP]);
-    setNewTeam("");
-    setNewName("");
-  };
-
-  const handleAddITMember = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    if (!e.target.value) return;
-    const [team, name] = e.target.value.split(":");
-    if (participants.some(p => p.name === name)) return;
-    const newP = { id: crypto.randomUUID(), team, name };
-    setParticipants([...participants, newP]);
-    e.target.value = "";
-  };
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       setFile(e.target.files[0]);
@@ -396,22 +410,38 @@ export default function Home() {
     participantsForSave: Participant[];
     existingMeetingId?: string | null;
   }) => {
-    const mappedTranscript = meetingResult.transcript.map(u => ({
+    const mappedTranscript = Array.isArray(meetingResult.transcript) ? meetingResult.transcript.map(u => ({
+      id: u.id,
       speaker: u.speaker || "알 수 없음",
-      text: u.text || ""
-    }));
+      text: u.text || "",
+      start: typeof u.start === "number" ? u.start : typeof u.startTime === "number" ? u.startTime : undefined,
+      end: typeof u.end === "number" ? u.end : typeof u.endTime === "number" ? u.endTime : undefined,
+    })).filter(u => u.text.trim()) : [];
+
+    const schedule = Array.isArray(meetingResult.summary?.schedule)
+      ? meetingResult.summary.schedule.map(item => ({
+        task: item?.task || "",
+        assignee: item?.assignee || "",
+        dueDate: item?.dueDate || "",
+      }))
+      : [];
 
     const payload = {
       title: title.trim() || "제목 없는 회의록",
       sourceType,
       meetingDate: meetingDate || new Date().toISOString().split("T")[0],
       audioUrl: meetingResult.audioUrl,
-      participants: participantsForSave.map(p => ({
+      participants: Array.isArray(participantsForSave) ? participantsForSave.map(p => ({
         team: p.team || "미지정",
         name: p.name || "이름 없음"
-      })),
+      })) : [],
       transcript: mappedTranscript,
-      summary: meetingResult.summary
+      summary: {
+        asis: meetingResult.summary?.asis || "",
+        tobe: meetingResult.summary?.tobe || "",
+        expected_effects: meetingResult.summary?.expected_effects || "",
+        schedule,
+      }
     };
 
     const res = await fetch(existingMeetingId ? `/api/meetings/${existingMeetingId}` : "/api/meetings", {
@@ -420,9 +450,9 @@ export default function Home() {
       body: JSON.stringify(payload)
     });
 
-    const data = await res.json().catch(() => null) as { meeting?: SavedMeeting; error?: string } | null;
+    const data = await res.json().catch(() => null) as SaveApiResponse | null;
     if (!res.ok) {
-      throw new Error(data?.error || "회의록 저장에 실패했습니다. 다시 시도해주세요.");
+      throw buildSaveError(data);
     }
 
     if (!data?.meeting?.id) {
@@ -436,9 +466,22 @@ export default function Home() {
     const targetFile = fileOverride ?? file;
     if (!targetFile) return;
     const sourceType = sourceTypeOverride ?? (activeTab === "record" ? "realtime" : "upload");
+    if (targetFile.size < 1024) {
+      const message = sourceType === "realtime"
+        ? "녹음된 음성이 비어 있거나 너무 짧습니다. 회의 분석을 위해 더 충분한 대화를 녹음해주세요."
+        : "분석 가능한 회의 내용이 부족합니다. 더 긴 회의 음성 또는 명확한 대화가 포함된 파일을 업로드해주세요.";
+      setError(message);
+      showModal({
+        title: sourceType === "realtime" ? "녹음 내용 부족" : "분석 내용 부족",
+        message,
+        type: "error"
+      });
+      return;
+    }
 
     setIsUploading(true);
     setAnalysisTime(0);
+    setAnalysisStage("파일 확인 중");
     setError(null);
     setSavedMeetingId(null);
     setResultSourceType(sourceType);
@@ -454,6 +497,7 @@ export default function Home() {
     formData.append("file", targetFile);
 
     try {
+      setAnalysisStage("대화 내용 변환 중");
       const response = await fetch("/api/summarize", {
         method: "POST",
         body: formData,
@@ -468,6 +512,7 @@ export default function Home() {
         throw new Error("분석 응답을 확인하지 못했습니다.");
       }
 
+      setAnalysisStage("회의 내용 분석 중");
       const normalizedResult = normalizeSummaryResult(data);
       const validation = validateAnalyzableContent(normalizedResult.transcript);
       if (!validation.isAnalyzable) {
@@ -495,6 +540,7 @@ export default function Home() {
       }
 
       try {
+        setAnalysisStage("회의록 저장 중");
         const savedMeeting = await persistMeetingToArchive({
           meetingResult: normalizedResult,
           title: defaultTitle,
@@ -510,11 +556,11 @@ export default function Home() {
           type: "success"
         });
       } catch (saveErr: unknown) {
-        const saveMessage = "회의록 저장에 실패했습니다. 다시 시도해주세요.";
+        const saveMessage = getErrorMessage(saveErr) || "회의록 저장에 실패했습니다. 저장소 또는 서버 연결 상태를 확인해주세요.";
         setArchiveErrorMessage(saveMessage);
         showModal({
           title: "저장 실패",
-          message: getErrorMessage(saveErr) || saveMessage,
+          message: saveMessage,
           type: "error"
         });
       }
@@ -523,6 +569,7 @@ export default function Home() {
       const typedError = err as Partial<SummaryApiError> & { status?: number };
       let friendlyError = typedError.userMessage || message || "분석 중 알 수 없는 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
       let modalTitle = sourceType === "realtime" ? "녹음 분석 오류" : "분석 오류";
+      const stageLabel = getStageLabel(typedError.stage);
 
       if (
         typedError.code === "INSUFFICIENT_MEETING_CONTENT" ||
@@ -566,7 +613,7 @@ export default function Home() {
       ) {
         friendlyError = "회의록 분석 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
       } else if (typedError.code === "PARSE_FAILED") {
-        friendlyError = "회의록 분석 결과를 해석하지 못했습니다. 잠시 후 다시 시도해주세요.";
+        friendlyError = "회의록 분석 결과 형식이 맞지 않았습니다. 잠시 후 다시 시도해주세요.";
       } else if (
         message.includes("Failed to fetch") ||
         message.includes("NetworkError") ||
@@ -582,6 +629,9 @@ export default function Home() {
       } else if (typedError.status === 503 || message.includes("503") || message.includes("Service Unavailable")) {
         friendlyError = "분석 서버가 일시적으로 바쁩니다. 약 1분 후 다시 시도해 주세요.";
       }
+      if (stageLabel && typedError.code !== "INSUFFICIENT_MEETING_CONTENT" && !friendlyError.includes(stageLabel)) {
+        friendlyError = `${stageLabel} 오류가 발생했습니다. ${friendlyError}`;
+      }
       setError(friendlyError);
       showModal({
         title: modalTitle,
@@ -590,6 +640,7 @@ export default function Home() {
       });
     } finally {
       setIsUploading(false);
+      setAnalysisStage("");
       if (analysisTimerRef.current) {
         clearInterval(analysisTimerRef.current);
         analysisTimerRef.current = null;
@@ -649,11 +700,11 @@ export default function Home() {
       });
       router.push("/archives");
     } catch (err: unknown) {
-      const saveMessage = "회의록 저장에 실패했습니다. 다시 시도해주세요.";
+      const saveMessage = getErrorMessage(err) || "회의록 저장에 실패했습니다. 저장소 또는 서버 연결 상태를 확인해주세요.";
       setArchiveErrorMessage(saveMessage);
       showModal({
         title: "저장 실패",
-        message: getErrorMessage(err) || saveMessage,
+        message: saveMessage,
         type: "error"
       });
     } finally {
@@ -676,71 +727,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* 2. Participant Management (Shared) */}
-      <section className="w-full max-w-3xl mx-auto bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-xl shadow-2xl">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-xl font-bold flex items-center gap-2 text-white">
-            <Users className="w-5 h-5 text-cyan-400" />
-            회의 참여자 관리
-          </h3>
-        </div>
-        <div className="flex flex-wrap md:flex-nowrap gap-4 mb-4">
-          <select
-            onChange={handleAddITMember}
-            defaultValue=""
-            className="bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-cyan-400 transition-colors w-full md:w-auto min-w-[200px]"
-          >
-            <option value="" disabled className="text-gray-900">팀원 선택</option>
-            {teamMembers.map(m => (
-              <option key={m.id} value={`${m.team}:${m.name}`} className="text-gray-900">
-                {m.team} {m.name}
-              </option>
-            ))}
-          </select>
-
-          <div className="flex gap-2 flex-1 w-full min-w-0">
-            <input
-              type="text"
-              placeholder="팀명"
-              value={newTeam}
-              onChange={e => setNewTeam(e.target.value)}
-              className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-fuchsia-400 transition-colors min-w-0"
-            />
-            <input
-              type="text"
-              placeholder="이름/직급"
-              value={newName}
-              onChange={e => setNewName(e.target.value)}
-              className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-fuchsia-400 transition-colors min-w-0"
-            />
-            <button
-              onClick={handleAddParticipant}
-              className="bg-white/20 hover:bg-white/30 text-white px-4 py-3 rounded-xl transition-colors flex items-center justify-center shrink-0"
-            >
-              <UserPlus className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {participants.length > 0 && (
-          <div className="flex flex-wrap gap-2 mt-4">
-            {participants.map(p => (
-              <div key={p.id} className="bg-gradient-to-r from-fuchsia-500/20 to-cyan-500/20 border border-white/10 px-3 py-1.5 rounded-full text-sm font-medium text-white flex items-center gap-2">
-                <span className="text-white/60">{p.team}</span>
-                <span>{p.name}</span>
-                <button
-                  onClick={() => setParticipants(participants.filter(x => x.id !== p.id))}
-                  className="text-white/40 hover:text-red-400 ml-1"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* 3. Upload / Record Section */}
+      {/* 2. Upload / Record Section */}
       {!result && (
         <section className="w-full max-w-3xl mx-auto flex flex-col gap-6">
           {/* Tab Switcher */}
@@ -789,7 +776,7 @@ export default function Home() {
                      <h3 className="text-xl font-semibold text-white">AI가 회의를 분석하고 있습니다...</h3>
                     <div className="flex flex-col items-center gap-1">
                       <span className="text-2xl font-mono font-bold text-fuchsia-300">{formatTime(analysisTime)}</span>
-                      <p className="text-purple-300/80 text-sm">참석자 식별 및 문맥 요약 중입니다. 잠시만 기다려주세요.</p>
+                      <p className="text-purple-300/80 text-sm">{analysisStage || "회의 내용을 처리 중입니다."}</p>
                     </div>
                   </>
                 ) : file && activeTab === "upload" ? (
@@ -839,7 +826,7 @@ export default function Home() {
                     <h3 className="text-xl font-semibold text-white">AI가 회의를 분석하고 있습니다...</h3>
                     <div className="flex flex-col items-center gap-1">
                       <span className="text-2xl font-mono font-bold text-cyan-300">{formatTime(analysisTime)}</span>
-                      <p className="text-cyan-300/80 text-sm">참석자 식별 및 문맥 요약 중입니다. 잠시만 기다려주세요.</p>
+                      <p className="text-cyan-300/80 text-sm">{analysisStage || "회의 내용을 처리 중입니다."}</p>
                       <p className="text-cyan-300/80 text-sm italic animate-pulse mt-2">최적의 모델을 찾아 분석을 진행 중입니다...</p>
                       <p className="text-white/40 text-[11px] mt-1 font-medium bg-white/5 px-3 py-1 rounded-full border border-white/10">
                         파일 크기에 따라 10초 ~ 40초 정도 소요됩니다
@@ -985,6 +972,14 @@ export default function Home() {
                 일감진행
               </button>
               <button
+                onClick={() => setShowVisualizationPopup(true)}
+                disabled={result.transcript.length === 0 && !result.summary.asis.trim() && !result.summary.tobe.trim() && !result.summary.expected_effects.trim()}
+                className="flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-sky-500 hover:from-cyan-400 hover:to-sky-400 text-white px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg border border-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <LayoutGrid className="w-5 h-5" />
+                회의내용 도식화
+              </button>
+              <button
                 onClick={handleSaveToArchive}
                 disabled={isSaving}
                 className="flex items-center gap-2 bg-gradient-to-r from-fuchsia-600 to-cyan-600 hover:from-fuchsia-500 hover:to-cyan-500 text-white px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg"
@@ -1075,24 +1070,13 @@ export default function Home() {
 
             {/* 회의록 전문 (하단 배치) */}
             <div className="w-full flex flex-col gap-6">
-              <div className="bg-white/5 border border-white/10 p-6 rounded-2xl backdrop-blur-xl">
-                <h4 className="text-sm font-bold text-white/50 mb-4 uppercase tracking-wider flex items-center gap-2">
-                  <FileText className="w-4 h-4" />
-                  회의록 대화 내역 (전문)
-                </h4>
-                <div className="overflow-y-auto pr-2 space-y-4 scrollbar-thin max-h-[600px]">
-                  {result.transcript.length > 0 ? (
-                    result.transcript.map((u, i) => (
-                      <div key={i} className="flex flex-col gap-1 p-3 bg-white/[0.03] rounded-xl border border-white/5">
-                        <span className="text-xs font-bold text-fuchsia-300">{u.speaker}</span>
-                        <p className="text-white/90 text-sm leading-relaxed">{u.text}</p>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="py-8 text-center text-white/30 text-sm">대화 내역이 없습니다.</div>
-                  )}
-                </div>
-              </div>
+              <TranscriptPlayer
+                audioUrl={audioUrl}
+                transcript={result.transcript}
+                title="대화 원문"
+                emptyMessage="대화 원문을 불러올 수 없습니다."
+                jumpTarget={transcriptJumpTarget}
+              />
             </div>
           </div>
         </section>
@@ -1120,6 +1104,16 @@ export default function Home() {
         meetingDate={meetingDate}
         participants={participants}
         summary={result?.summary || { asis: "", tobe: "", expected_effects: "", schedule: [] }}
+        />
+      <VisualizationPopup
+        isOpen={showVisualizationPopup && Boolean(result)}
+        onClose={() => setShowVisualizationPopup(false)}
+        transcript={result?.transcript || []}
+        summary={result?.summary || { asis: "", tobe: "", expected_effects: "", schedule: [] }}
+        onJump={index => setTranscriptJumpTarget(previous => ({
+          index,
+          nonce: (previous?.nonce || 0) + 1,
+        }))}
       />
       <Modal
         isOpen={modalConfig.isOpen}
