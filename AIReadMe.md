@@ -66,3 +66,16 @@
   - 실패한 방식: GitHub 커넥터의 Git blob API는 현재 설치 권한에서 `Resource not accessible by integration` 403으로 실패했다.
   - 성공한 방식: `brew install gh`로 GitHub CLI를 설치하고 `printf 'y\n' | gh auth login --hostname github.com --git-protocol https --web`로 device login을 완료한다.
   - 성공한 방식: 로그인 후 `gh auth setup-git`을 실행해야 일반 `git push origin main`이 gh credential을 사용한다.
+
+## 오류 기록 / Troubleshooting Log
+- 날짜: 2026-05-07
+- 발생 화면: 녹화파일 업로드 후 회의록 분석 화면
+- 사용자에게 표시된 메시지: `분석 중 알 수 없는 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.`
+- 실제 오류 원인: 단계별 오류가 generic 응답으로 뭉개지는 문제가 있었고, 추가 확인 결과 모델 폴백 목록에 폐기된 Gemini 모델(`gemini-1.5-flash`, 기존 2.0 계열 포함)이 섞여 있어 마지막 실패가 `404 model not found`로 덮이는 문제가 있었다. 그 결과 사용자 화면에는 원인을 알 수 없는 분석 오류처럼 보였다.
+- 관련 파일: `src/app/api/summarize/route.ts`, `src/app/page.tsx`, `src/lib/analysis-guard.ts`
+- 관련 함수/API: `POST /api/summarize`, `validateAnalyzableContent`, 업로드 후 `fetch("/api/summarize")` 처리
+- 재현 방법: 충분하지 않거나 형식이 불완전한 녹화파일을 업로드했을 때 generic 메시지가 표시됨
+- 수정 여부: 수정함
+- 수정 내용: `/api/summarize`에 단계별 `errorCode`, `userMessage`, `debugId` 응답을 추가하고, 클라이언트는 서버가 준 안전한 메시지를 우선 표시하도록 변경했다. MIME type 미확인 파일에 대한 명시적 검증과 설정 누락에 대한 조기 오류도 추가했다. 모델 목록은 2.5 계열(`gemini-2.5-flash`, `gemini-2.5-flash-lite`)로 교체했다.
+- 아직 남은 의심 지점: 외부 Gemini 업로드/전사 실패와 JSON 파싱 실패의 실제 비율은 아직 수집하지 못했다. 다음에는 서버 로그의 `debugId` 기준으로 단계별 오류 빈도를 확인해야 한다.
+- 다음 명령에서 참고할 내용: 업로드 오류가 다시 나오면 서버 응답의 `errorCode`와 `debugId`를 먼저 확인하고, `CONFIG_ERROR`/`UPLOAD_TOO_LARGE`/`UNSUPPORTED_FILE_TYPE`/`TRANSCRIPTION_FAILED`/`PARSE_FAILED`/`TIMEOUT` 중 어디인지부터 분기해야 한다. 모델 404가 보이면 deprecated model alias 사용 여부를 먼저 확인한다.

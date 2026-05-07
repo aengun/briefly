@@ -32,6 +32,37 @@ type SummaryResult = {
   };
 };
 
+type AnalysisErrorCode =
+  | "INVALID_REQUEST"
+  | "UNSUPPORTED_FILE_TYPE"
+  | "UPLOAD_TOO_LARGE"
+  | "UPLOAD_FAILED"
+  | "TRANSCRIPTION_FAILED"
+  | "INSUFFICIENT_MEETING_CONTENT"
+  | "AI_ANALYSIS_FAILED"
+  | "PARSE_FAILED"
+  | "TIMEOUT"
+  | "CONFIG_ERROR"
+  | "UNKNOWN_ERROR";
+
+type SummaryApiResponse = Partial<SummaryResult> & {
+  usedModel?: string;
+  error?: string;
+  code?: string;
+  errorCode?: AnalysisErrorCode;
+  message?: string;
+  userMessage?: string;
+  debugId?: string;
+  stage?: string;
+};
+
+type SummaryApiError = Error & {
+  code?: AnalysisErrorCode;
+  userMessage?: string;
+  debugId?: string;
+  stage?: string;
+};
+
 export type Participant = {
   id: string;
   team: string;
@@ -49,6 +80,52 @@ type SavedMeeting = {
 };
 
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+const buildSummaryApiError = (
+  response: Response,
+  data: SummaryApiResponse | null,
+  sourceType: SourceType
+) => {
+  const code = data?.errorCode || (data?.code as AnalysisErrorCode | undefined);
+  const serverMessage = data?.userMessage || data?.error || data?.message || "";
+  const title = sourceType === "realtime" ? "녹음 분석 오류" : "분석 오류";
+
+  const fallbackMessageByCode: Partial<Record<AnalysisErrorCode, string>> = {
+    INVALID_REQUEST: "분석할 파일이 없습니다.",
+    UNSUPPORTED_FILE_TYPE: "지원하지 않는 파일 형식입니다. mp3, wav, m4a, mp4 등 지원 형식의 파일을 업로드해주세요.",
+    UPLOAD_TOO_LARGE: "업로드 가능한 파일 용량을 초과했습니다. 파일 크기를 줄인 후 다시 시도해주세요.",
+    UPLOAD_FAILED: "녹화파일을 불러오지 못했습니다. 파일 접근 권한 또는 저장 상태를 확인해주세요.",
+    TRANSCRIPTION_FAILED: sourceType === "realtime"
+      ? "녹음된 내용이 부족해 회의록을 생성할 수 없습니다. 회의 분석을 위해 더 충분한 대화 내용을 녹음해주세요."
+      : "녹화파일에서 음성을 텍스트로 변환하지 못했습니다. 음성이 포함되어 있는지 확인해주세요.",
+    INSUFFICIENT_MEETING_CONTENT: sourceType === "realtime"
+      ? "녹음된 내용이 부족해 회의록을 생성할 수 없습니다. 회의 분석을 위해 더 충분한 대화 내용을 녹음해주세요."
+      : "분석 가능한 회의 내용이 부족합니다. 업로드한 파일에서 충분한 회의 내용을 찾지 못했습니다.",
+    AI_ANALYSIS_FAILED: "회의록 분석 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+    PARSE_FAILED: "회의록 분석 결과를 해석하지 못했습니다. 잠시 후 다시 시도해주세요.",
+    TIMEOUT: "분석 요청 시간이 초과되었습니다. 파일이 너무 크거나 네트워크가 불안정할 수 있습니다.",
+    CONFIG_ERROR: "분석 서비스 설정에 문제가 있습니다. 관리자에게 문의해주세요.",
+    UNKNOWN_ERROR: "분석 중 오류가 발생했습니다. 오류 원인을 기록했으며, 관리자 확인이 필요합니다.",
+  };
+
+  const message =
+    serverMessage ||
+    (code && fallbackMessageByCode[code]) ||
+    (response.status === 413 ? fallbackMessageByCode.UPLOAD_TOO_LARGE : "") ||
+    (response.status === 415 ? fallbackMessageByCode.UNSUPPORTED_FILE_TYPE : "") ||
+    (response.status === 422 ? fallbackMessageByCode.INSUFFICIENT_MEETING_CONTENT : "") ||
+    (response.status === 429 ? "현재 AI 사용량이 많아 잠시 후 다시 시도해주세요. (할당량 초과)" : "") ||
+    (response.status === 503 ? "분석 서버가 일시적으로 응답하지 않습니다. 잠시 후 다시 시도해주세요." : "") ||
+    (response.status >= 500 ? fallbackMessageByCode.UNKNOWN_ERROR : "") ||
+    "분석 중 오류가 발생했습니다. 오류 원인을 기록했으며, 관리자 확인이 필요합니다.";
+
+  const error = new Error(message) as SummaryApiError;
+  error.code = code;
+  error.userMessage = message;
+  error.stage = data?.stage;
+  error.debugId = data?.debugId;
+  return { error, title, message };
+};
 
 const normalizeSummaryResult = (value: Partial<SummaryResult>): SummaryResult => ({
   audioUrl: value.audioUrl || "",
@@ -382,9 +459,10 @@ export default function Home() {
         body: formData,
       });
 
-      const data = await response.json().catch(() => null) as (Partial<SummaryResult> & { usedModel?: string; error?: string; code?: string }) | null;
+      const data = await response.json().catch(() => null) as SummaryApiResponse | null;
       if (!response.ok) {
-        throw new Error(data?.error || "분석 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
+        const apiError = buildSummaryApiError(response, data, sourceType);
+        throw apiError.error;
       }
       if (!data) {
         throw new Error("분석 응답을 확인하지 못했습니다.");
@@ -442,9 +520,12 @@ export default function Home() {
       }
     } catch (err: unknown) {
       const message = getErrorMessage(err);
-      let friendlyError = "분석 중 알 수 없는 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
-      let modalTitle = "분석 오류";
+      const typedError = err as Partial<SummaryApiError> & { status?: number };
+      let friendlyError = typedError.userMessage || message || "분석 중 알 수 없는 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
+      let modalTitle = sourceType === "realtime" ? "녹음 분석 오류" : "분석 오류";
+
       if (
+        typedError.code === "INSUFFICIENT_MEETING_CONTENT" ||
         message.includes("분석 가능한") ||
         message.includes("충분한 회의") ||
         message.includes("더 긴 음성") ||
@@ -456,14 +537,50 @@ export default function Home() {
           : "분석 가능한 회의 내용이 부족합니다. 업로드한 파일에서 충분한 회의 내용을 찾지 못했습니다.";
         setResult(null);
         setShowTaskTemplate(false);
-      } else if (message.includes("SERVICE_DISABLED") || message.includes("Gemini API has not been used")) {
-        friendlyError = "Gemini 연동이 현재 이 Google 프로젝트에서 활성화되어 있지 않습니다. Google Cloud Console에서 Generative Language API를 활성화해 주세요.";
-      } else if (message.includes("429")) {
-        friendlyError = "현재 AI 사용량이 많아 잠시 후 다시 시도해 주세요. (할당량 초과)";
-      } else if (message.includes("503") || message.includes("Service Unavailable")) {
-        friendlyError = "분석 서버가 일시적으로 바쁩니다. 약 1분 후 다시 시도해 주세요.";
-      } else if (message.includes("403")) {
+      } else if (
+        typedError.code === "UNSUPPORTED_FILE_TYPE" ||
+        message.includes("지원하지 않는 파일 형식")
+      ) {
+        friendlyError = "지원하지 않는 파일 형식입니다. mp3, wav, m4a, mp4 등 지원 형식의 파일을 업로드해주세요.";
+      } else if (
+        typedError.code === "UPLOAD_TOO_LARGE" ||
+        message.includes("용량을 초과") ||
+        message.includes("file is too large")
+      ) {
+        friendlyError = "업로드 가능한 파일 용량을 초과했습니다. 파일 크기를 줄인 후 다시 시도해주세요.";
+      } else if (
+        typedError.code === "TRANSCRIPTION_FAILED" ||
+        message.includes("음성을 텍스트로 변환하지 못했습니다")
+      ) {
+        friendlyError = sourceType === "realtime"
+          ? "녹음된 내용이 부족해 회의록을 생성할 수 없습니다. 회의 분석을 위해 더 충분한 대화 내용을 녹음해주세요."
+          : "녹화파일에서 음성을 텍스트로 변환하지 못했습니다. 음성이 포함되어 있는지 확인해주세요.";
+      } else if (typedError.code === "CONFIG_ERROR") {
+        friendlyError = "분석 서비스 설정에 문제가 있습니다. 관리자에게 문의해주세요.";
+      } else if (typedError.code === "TIMEOUT" || message.includes("시간이 초과")) {
+        friendlyError = "분석 요청 시간이 초과되었습니다. 파일이 너무 크거나 네트워크가 불안정할 수 있습니다.";
+      } else if (
+        typedError.code === "AI_ANALYSIS_FAILED" ||
+        message.includes("회의록 분석 처리 중 오류") ||
+        message.includes("분석 서버가 일시적으로 응답하지 않습니다.")
+      ) {
+        friendlyError = "회의록 분석 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
+      } else if (typedError.code === "PARSE_FAILED") {
+        friendlyError = "회의록 분석 결과를 해석하지 못했습니다. 잠시 후 다시 시도해주세요.";
+      } else if (
+        message.includes("Failed to fetch") ||
+        message.includes("NetworkError") ||
+        message.includes("fetch failed")
+      ) {
+        friendlyError = "분석 요청 시간이 초과되었습니다. 파일이 너무 크거나 네트워크가 불안정할 수 있습니다.";
+      } else if (message.includes("403") || message.includes("권한")) {
         friendlyError = "연동 권한 오류가 발생했습니다. 키 설정을 확인해 주세요.";
+      } else if (message.includes("Gemini API has not been used") || message.includes("SERVICE_DISABLED")) {
+        friendlyError = "분석 서비스가 현재 활성화되어 있지 않습니다. 관리자에게 문의해주세요.";
+      } else if (typedError.status === 429 || message.includes("429")) {
+        friendlyError = "현재 AI 사용량이 많아 잠시 후 다시 시도해 주세요. (할당량 초과)";
+      } else if (typedError.status === 503 || message.includes("503") || message.includes("Service Unavailable")) {
+        friendlyError = "분석 서버가 일시적으로 바쁩니다. 약 1분 후 다시 시도해 주세요.";
       }
       setError(friendlyError);
       showModal({
