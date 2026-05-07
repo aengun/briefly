@@ -891,32 +891,10 @@ export default function Home() {
             </div>
           )}
 
-          <div className="w-full flex flex-col gap-8 lg:flex-row">
-            {/* 회의록 */}
-            <div className="w-full lg:w-[40%] flex flex-col gap-6">
-              <div className="bg-white/5 border border-white/10 p-6 rounded-2xl backdrop-blur-xl">
-                <h4 className="text-sm font-bold text-white/50 mb-4 uppercase tracking-wider flex items-center gap-2">
-                  <FileText className="w-4 h-4" />
-                  회의록 대화 내역
-                </h4>
-                <div className="flex-1 overflow-y-auto pr-2 space-y-4 scrollbar-thin max-h-[500px]">
-                  {result.transcript.length > 0 ? (
-                    result.transcript.map((u, i) => (
-                      <div key={i} className="flex flex-col gap-1 p-3 bg-white/[0.03] rounded-xl border border-white/5">
-                        <span className="text-xs font-bold text-fuchsia-300">{u.speaker}</span>
-                        <p className="text-white/90 text-sm leading-relaxed">{u.text}</p>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="py-8 text-center text-white/30 text-sm">대화 내역이 없습니다.</div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* 분석 요약 */}
-            <div className="w-full lg:w-[60%] flex flex-col gap-6">
-              <div className="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-xl shadow-2xl relative overflow-hidden flex-1 h-[800px] overflow-y-auto scrollbar-thin">
+          <div className="w-full flex flex-col gap-8">
+            {/* 분석 요약 (상단 중앙 배치) */}
+            <div className="w-full flex flex-col gap-6">
+              <div className="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-xl shadow-2xl relative overflow-hidden">
                 <h3 className="text-3xl font-extrabold mb-8 flex items-center gap-3">
                   <div className="bg-gradient-to-br from-fuchsia-500 to-purple-600 p-2 text-white rounded-xl"><ChevronRight className="w-6 h-6" /></div>
                   분석 요약
@@ -978,6 +956,28 @@ export default function Home() {
                       </table>
                     </div>
                   </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 회의록 전문 (하단 배치) */}
+            <div className="w-full flex flex-col gap-6">
+              <div className="bg-white/5 border border-white/10 p-6 rounded-2xl backdrop-blur-xl">
+                <h4 className="text-sm font-bold text-white/50 mb-4 uppercase tracking-wider flex items-center gap-2">
+                  <FileText className="w-4 h-4" />
+                  회의록 대화 내역 (전문)
+                </h4>
+                <div className="overflow-y-auto pr-2 space-y-4 scrollbar-thin max-h-[600px]">
+                  {result.transcript.length > 0 ? (
+                    result.transcript.map((u, i) => (
+                      <div key={i} className="flex flex-col gap-1 p-3 bg-white/[0.03] rounded-xl border border-white/5">
+                        <span className="text-xs font-bold text-fuchsia-300">{u.speaker}</span>
+                        <p className="text-white/90 text-sm leading-relaxed">{u.text}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="py-8 text-center text-white/30 text-sm">대화 내역이 없습니다.</div>
+                  )}
                 </div>
               </div>
             </div>

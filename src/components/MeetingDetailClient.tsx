@@ -459,67 +459,36 @@ ${renderAsList(meeting.expected_effects)}
         )}
 
         {/* Participants Tag List */}
-        <div className="flex flex-wrap gap-2 mt-6 pt-6 border-t border-white/10">
-          {meeting.participants.map((p) => (
-            <div key={p.id} className="bg-white/10 border border-white/10 px-3 py-1.5 rounded-full text-sm font-medium text-white flex items-center gap-2">
-              <span className="text-white/60">{p.team}</span>
-              <span>{p.name}</span>
-              {isEditMode && (
-                <button
-                  onClick={() => setMeeting({ ...meeting, participants: meeting.participants.filter(x => x.id !== p.id) })}
-                  className="text-white/40 hover:text-red-400 ml-1"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
+        {(meeting.participants.length > 0 || isEditMode) && (
+          <div className="flex flex-wrap gap-2 mt-6 pt-6 border-t border-white/10">
+            {meeting.participants.map((p) => (
+              <div key={p.id} className="bg-white/10 border border-white/10 px-3 py-1.5 rounded-full text-sm font-medium text-white flex items-center gap-2">
+                <span className="text-white/60">{p.team}</span>
+                <span>{p.name}</span>
+                {isEditMode && (
+                  <button
+                    onClick={() => setMeeting({ ...meeting, participants: meeting.participants.filter(x => x.id !== p.id) })}
+                    className="text-white/40 hover:text-red-400 ml-1"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="w-full flex flex-col gap-8 lg:flex-row">
-        {/* 오디오 및 회의록 */}
-        <div className="w-full lg:w-[40%] flex flex-col gap-6">
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-xl shadow-2xl flex flex-col h-[800px]">
-            <h3 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-400 flex items-center gap-2 mb-6">
-              <FileAudio className="w-6 h-6 text-cyan-400" />
-              회의록
-            </h3>
-
-            {meeting.audioUrl && (
-              <div className="mb-6 p-4 bg-white/5 rounded-2xl border border-white/10 flex flex-col items-center">
-                <audio controls className="w-full grayscale invert opacity-90" src={meeting.audioUrl} />
-              </div>
-            )}
-
-
-            <div className="flex-1 overflow-y-auto pr-4 space-y-4 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent pb-10">
-              {meeting.transcript.length > 0 ? (
-                meeting.transcript.map((u, i) => (
-                  <div key={i} className="flex flex-col gap-1 p-3 bg-white/[0.03] rounded-xl border border-white/5">
-                    <span className="text-xs font-bold text-fuchsia-300">
-                      {u.speaker}
-                    </span>
-                    <p className="text-white/90 text-sm leading-relaxed">{u.text}</p>
-                  </div>
-                ))
-              ) : (
-                <div className="py-8 text-center text-white/30 text-sm">대화 내역이 없습니다.</div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* 분석 요약 */}
-        <div className="w-full lg:w-[60%] flex flex-col gap-6">
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-xl shadow-2xl relative overflow-hidden flex-1 h-[800px] overflow-y-auto scrollbar-thin">
+      <div className="w-full flex flex-col gap-8">
+        {/* 분석 요약 (상단 중앙 배치) */}
+        <div className="w-full flex flex-col gap-6">
+          <div className="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-xl shadow-2xl relative overflow-hidden">
             <h3 className="text-3xl font-extrabold mb-8 flex items-center gap-3">
               <div className="bg-gradient-to-br from-fuchsia-500 to-purple-600 p-2 text-white rounded-xl">
                 <ChevronRight className="w-6 h-6" />
               </div>
               분석 요약
             </h3>
-
             <div className="space-y-8 relative z-10">
               <div className="group">
                 <h4 className="text-sm font-bold text-fuchsia-400 uppercase tracking-widest mb-3 flex items-center gap-2">
@@ -662,7 +631,40 @@ ${renderAsList(meeting.expected_effects)}
             </div>
           </div>
         </div>
+
+        {/* 오디오 및 회의록 (하단 배치) */}
+        <div className="w-full flex flex-col gap-6">
+          <div className="bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-xl shadow-2xl flex flex-col">
+            <h3 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-400 flex items-center gap-2 mb-6">
+              <FileAudio className="w-6 h-6 text-cyan-400" />
+              회의록 (전문)
+            </h3>
+
+            {meeting.audioUrl && (
+              <div className="mb-6 p-4 bg-white/5 rounded-2xl border border-white/10 flex flex-col items-center">
+                <audio controls className="w-full grayscale invert opacity-90" src={meeting.audioUrl} />
+              </div>
+            )}
+
+
+            <div className="overflow-y-auto pr-4 space-y-4 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent pb-10 max-h-[600px]">
+              {meeting.transcript.length > 0 ? (
+                meeting.transcript.map((u, i) => (
+                  <div key={i} className="flex flex-col gap-1 p-3 bg-white/[0.03] rounded-xl border border-white/5">
+                    <span className="text-xs font-bold text-fuchsia-300">
+                      {u.speaker}
+                    </span>
+                    <p className="text-white/90 text-sm leading-relaxed">{u.text}</p>
+                  </div>
+                ))
+              ) : (
+                <div className="py-8 text-center text-white/30 text-sm">대화 내역이 없습니다.</div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
+
     </div>
 
       <WorkProgressModal
