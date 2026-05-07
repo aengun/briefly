@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Calendar, ChevronRight, FileAudio, UsersRound, Save, Loader2, Users, UserPlus, FileText, Share2, LayoutGrid } from "lucide-react";
+import { Calendar, ChevronRight, FileAudio, UsersRound, Save, Loader2, Users, UserPlus, FileText, Share2, LayoutGrid, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Modal from "./Modal";
 import WorkProgressModal from "./WorkProgressModal";
@@ -125,6 +125,32 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
     const newP = { id: crypto.randomUUID(), team, name };
     setMeeting({ ...meeting, participants: [...meeting.participants, newP] });
     e.target.value = "";
+  };
+
+  const handleDelete = () => {
+    showModal({
+      title: "회의록 삭제",
+      message: `"${meeting.title}" 회의록을 삭제하시겠습니까?\n삭제된 데이터는 복구할 수 없습니다.`,
+      type: "confirm",
+      onConfirm: async () => {
+        closeModal();
+        try {
+          const res = await fetch(`/api/meetings/${meeting.id}`, {
+            method: "DELETE",
+          });
+          if (!res.ok) throw new Error("삭제에 실패했습니다.");
+          
+          router.push("/archives");
+          router.refresh();
+        } catch (err: any) {
+          showModal({
+            title: "오류 발생",
+            message: err.message,
+            type: "error"
+          });
+        }
+      }
+    });
   };
 
   const handleSave = async () => {
@@ -423,6 +449,15 @@ ${renderAsList(meeting.expected_effects)}
             >
               {isEditMode ? "취소" : "편집 모드"}
             </button>
+            {!isEditMode && (
+              <button
+                onClick={handleDelete}
+                className="bg-white/5 text-red-400 hover:bg-red-500/20 px-4 py-2.5 rounded-xl font-semibold transition-all flex items-center gap-2 border border-white/10"
+                title="회의록 삭제"
+              >
+                <Trash2 className="w-5 h-5" />
+              </button>
+            )}
             {isEditMode && (
               <button
                 onClick={handleSave}

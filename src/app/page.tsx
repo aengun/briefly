@@ -159,53 +159,6 @@ export default function Home() {
   const [showTaskTemplate, setShowTaskTemplate] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 재분석 파라미터는 최초 진입 시 한 번만 처리한다.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const meetingId = params.get("reanalyze");
-    
-    if (meetingId) {
-      const loadAndAnalyze = async () => {
-        setIsUploading(true);
-        try {
-          // 1. 회의 정보 조회
-          const res = await fetch(`/api/meetings/${meetingId}`);
-          if (!res.ok) throw new Error("회의 정보를 불러오지 못했습니다.");
-          const meeting = await res.json() as ReanalysisMeeting;
-          
-          if (!meeting.audioUrl) throw new Error("오디오 파일 경로가 없습니다.");
-          
-          // 2. 오디오 파일 페치 및 파일 객체화
-          const audioRes = await fetch(meeting.audioUrl);
-          const blob = await audioRes.blob();
-          const fileName = meeting.audioUrl.split("/").pop() || "reanalysis.mp3";
-          const reanalysisFile = new File([blob], fileName, { type: blob.type });
-          
-          // 3. 기존 참여자 정보가 있다면 세팅 (선택사항)
-          if (meeting.participants && meeting.participants.length > 0) {
-            setParticipants(meeting.participants.map((p) => ({
-              id: p.id || crypto.randomUUID(),
-              team: p.team,
-              name: p.name
-            })));
-          }
-
-          setFile(reanalysisFile);
-          // 4. 분석 시작
-          handleUpload(reanalysisFile, meeting.sourceType || "upload");
-          
-          // URL 파라미터 정리 (무한 루프 방지)
-          window.history.replaceState({}, document.title, "/");
-        } catch (err: unknown) {
-          setError(`재분석 실패: ${getErrorMessage(err)}`);
-          setIsUploading(false);
-        }
-      };
-      loadAndAnalyze();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // Prevent Hydration mismatch by setting initial date on client only
   useEffect(() => {
     setMeetingDate(new Date().toISOString().split('T')[0]);
