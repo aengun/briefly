@@ -10,6 +10,7 @@ datasource db {
 model Meeting {
   id               String        @id @default(uuid())
   title            String
+  sourceType       String        @default("upload")
   createdAt        DateTime      @default(now())
   meetingDate      DateTime      @default(now())
   audioUrl         String

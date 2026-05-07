@@ -1,23 +1,12 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 import Link from "next/link";
 import { UploadCloud, Database } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "Briefly - Meeting Summarizer",
-  description: "Internal AI Meeting Summarizer",
+  title: "Briefly - 회의록 분석",
+  description: "사내 회의록 분석 서비스",
 };
 
 export default function RootLayout({
@@ -27,8 +16,8 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      lang="ko"
+      className="h-full antialiased"
     >
       <body className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-slate-900 text-white font-sans selection:bg-fuchsia-500 selection:text-white flex flex-col">
         <header className="px-8 py-6 w-full border-b border-white/10 backdrop-blur-md bg-white/5 sticky top-0 z-50">
@@ -42,10 +31,10 @@ export default function RootLayout({
             <div className="flex items-center gap-6">
               <Link href="/archives" className="flex items-center gap-2 text-sm font-medium text-purple-200 hover:text-white transition-colors">
                 <Database className="w-4 h-4" />
-                회의 기록 보관소
+                회의록 보관소
               </Link>
               <div className="text-sm font-medium text-purple-200 bg-purple-900/40 px-4 py-2 rounded-full ring-1 ring-purple-500/30 hidden sm:block">
-                Internal Meeting Summarizer
+                사내 회의록 분석
               </div>
             </div>
           </div>

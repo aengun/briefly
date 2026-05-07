@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Calendar, ChevronRight, FileAudio, UsersRound, Save, Loader2, Users, UserPlus, FileText, Share2, LayoutGrid, CheckSquare, X } from "lucide-react";
+import { Calendar, ChevronRight, FileAudio, UsersRound, Save, Loader2, Users, UserPlus, FileText, Share2, LayoutGrid } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Modal from "./Modal";
+import WorkProgressModal from "./WorkProgressModal";
 
 type Participant = {
   id: string;
@@ -27,6 +28,7 @@ type ScheduleItem = {
 type MeetingData = {
   id: string;
   title: string;
+  sourceType?: string;
   audioUrl: string;
   asis: string;
   tobe: string;
@@ -43,6 +45,19 @@ type TeamMember = {
   team: string;
   name: string;
 };
+
+const escapeHtml = (value: string) => value
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;")
+  .replace(/'/g, "&#39;");
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+const getSourceLabel = (sourceType?: string) => (
+  sourceType === "realtime" ? "실시간 녹화" : "업로드 파일"
+);
 
 export default function MeetingDetailClient({ initialMeeting }: { initialMeeting: MeetingData }) {
   const router = useRouter();
@@ -126,6 +141,7 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: meeting.title,
+          sourceType: meeting.sourceType,
           meetingDate: meeting.meetingDate,
           participants: meeting.participants,
           transcript: updatedTranscript,
@@ -150,10 +166,10 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
         type: "success"
       });
       router.refresh();
-    } catch (err: any) {
+    } catch (err: unknown) {
       showModal({
         title: "저장 실패",
-        message: err.message,
+        message: getErrorMessage(err),
         type: "error"
       });
     } finally {
@@ -167,11 +183,26 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
       .map(p => {
         const items = p.split("\n")
           .filter(line => line.trim())
-          .map(line => `<li>${line.trim()}</li>`)
+          .map(line => `<li>${escapeHtml(line.trim())}</li>`)
           .join("");
         return `<ul>${items}</ul>`;
       })
       .join("\n");
+  };
+
+  const renderSummaryContent = (text: string, emptyMessage: string) => {
+    const paragraphs = text.split("\n\n").filter(p => p.trim());
+    if (paragraphs.length === 0) {
+      return <p className="text-white/40 text-sm">{emptyMessage}</p>;
+    }
+
+    return paragraphs.map((p, pIdx) => (
+      <ul key={pIdx} className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
+        {p.split("\n").filter(line => line.trim()).map((line, i) => (
+          <li key={i}>{line.trim()}</li>
+        ))}
+      </ul>
+    ));
   };
 
   const handleCopyHtml = () => {
@@ -186,17 +217,17 @@ ${renderAsList(meeting.expected_effects)}
 <table border="1" style="border-collapse: collapse; width: 100%;">
   <thead>
     <tr style="background-color: #f2f2f2;">
-      <th style="padding: 8px; text-align: left;">Task</th>
-      <th style="padding: 8px; text-align: left;">Assignee</th>
-      <th style="padding: 8px; text-align: left;">Due Date</th>
+      <th style="padding: 8px; text-align: left;">일감</th>
+      <th style="padding: 8px; text-align: left;">담당자</th>
+      <th style="padding: 8px; text-align: left;">기한</th>
     </tr>
   </thead>
   <tbody>
     ${meeting.schedule.map(item => `
     <tr>
-      <td style="padding: 8px;">${item.task}</td>
-      <td style="padding: 8px;">${item.assignee}</td>
-      <td style="padding: 8px;">${item.dueDate}</td>
+      <td style="padding: 8px;">${escapeHtml(item.task)}</td>
+      <td style="padding: 8px;">${escapeHtml(item.assignee)}</td>
+      <td style="padding: 8px;">${escapeHtml(item.dueDate)}</td>
     </tr>
     `).join("")}
   </tbody>
@@ -206,7 +237,7 @@ ${renderAsList(meeting.expected_effects)}
     navigator.clipboard.writeText(html).then(() => {
       showModal({
         title: "복사 완료",
-        message: "HTML 형식이 클립보드에 복사되었습니다.",
+        message: "문서 형식이 클립보드에 복사되었습니다.",
         type: "success"
       });
     }).catch(err => {
@@ -222,7 +253,7 @@ ${renderAsList(meeting.expected_effects)}
   const handleSendToConfluence = () => {
     showModal({
       title: "WIKI 전송",
-      message: "이 내용을 Confluence로 전송하여 새 페이지로 저장하시겠습니까?",
+      message: "이 내용을 WIKI로 전송하여 새 페이지로 저장하시겠습니까?",
       type: "confirm",
       onConfirm: async () => {
         closeModal();
@@ -245,17 +276,17 @@ ${renderAsList(meeting.expected_effects)}
 <table border="1" style="border-collapse: collapse; width: 100%;">
   <thead>
     <tr style="background-color: #f2f2f2;">
-      <th style="padding: 8px; text-align: left;">Task</th>
-      <th style="padding: 8px; text-align: left;">Assignee</th>
-      <th style="padding: 8px; text-align: left;">Due Date</th>
+      <th style="padding: 8px; text-align: left;">일감</th>
+      <th style="padding: 8px; text-align: left;">담당자</th>
+      <th style="padding: 8px; text-align: left;">기한</th>
     </tr>
   </thead>
   <tbody>
     ${meeting.schedule.map(item => `
     <tr>
-      <td style="padding: 8px;">${item.task}</td>
-      <td style="padding: 8px;">${item.assignee}</td>
-      <td style="padding: 8px;">${item.dueDate}</td>
+      <td style="padding: 8px;">${escapeHtml(item.task)}</td>
+      <td style="padding: 8px;">${escapeHtml(item.assignee)}</td>
+      <td style="padding: 8px;">${escapeHtml(item.dueDate)}</td>
     </tr>
     `).join("")}
   </tbody>
@@ -279,12 +310,12 @@ ${renderAsList(meeting.expected_effects)}
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || "Confluence 전송 실패");
+        throw new Error(data.error || "WIKI 전송 실패");
       }
 
       showModal({
         title: "전송 완료",
-        message: "Confluence 페이지가 성공적으로 생성되었습니다.",
+        message: "WIKI 페이지가 생성되었습니다.",
         type: "confirm",
         confirmText: "페이지 확인",
         cancelText: "닫기",
@@ -293,10 +324,10 @@ ${renderAsList(meeting.expected_effects)}
           window.open(data.url, "_blank");
         }
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       showModal({
         title: "전송 실패",
-        message: err.message,
+        message: getErrorMessage(err),
         type: "error"
       });
     } finally {
@@ -309,7 +340,7 @@ ${renderAsList(meeting.expected_effects)}
     <div className="flex flex-col gap-8">
       {/* Header */}
       <div className="bg-white/5 border border-white/10 p-8 rounded-3xl backdrop-blur-xl relative overflow-hidden">
-        <div className="flex justify-between items-start relative z-10 gap-8">
+        <div className="flex flex-col justify-between items-start relative z-10 gap-6 lg:flex-row lg:gap-8">
           <div className="flex-1">
             {isEditMode ? (
               <input
@@ -321,6 +352,13 @@ ${renderAsList(meeting.expected_effects)}
             ) : (
               <h1 className="text-3xl font-extrabold text-white mb-4">{meeting.title}</h1>
             )}
+            <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold ${
+              meeting.sourceType === "realtime"
+                ? "border-rose-400/30 bg-rose-500/15 text-rose-200"
+                : "border-cyan-400/30 bg-cyan-500/15 text-cyan-200"
+            }`}>
+              {getSourceLabel(meeting.sourceType)}
+            </span>
             <div className="flex flex-wrap gap-6 text-white/70 mt-4">
               <div className="flex items-center gap-2">
                 <Calendar className="w-5 h-5 text-cyan-400" />
@@ -346,7 +384,7 @@ ${renderAsList(meeting.expected_effects)}
               </div>
             </div>
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             {!isEditMode && (
               <>
                 <button
@@ -361,7 +399,7 @@ ${renderAsList(meeting.expected_effects)}
                   className="bg-white/10 text-white hover:bg-white/20 px-6 py-2.5 rounded-xl font-semibold transition-all flex items-center gap-2 border border-white/10"
                 >
                   <FileText className="w-5 h-5" />
-                  HTML로 복사
+                  문서 형식 복사
                 </button>
                 <button
                   onClick={handleSendToConfluence}
@@ -411,7 +449,7 @@ ${renderAsList(meeting.expected_effects)}
                 defaultValue=""
                 className="bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none text-white focus:border-cyan-400 transition-colors"
               >
-                <option value="" disabled className="text-gray-900">IT 팀원 추가</option>
+                <option value="" disabled className="text-gray-900">팀원 추가</option>
                 {teamMembers.map(m => (
                   <option key={m.id} value={`${m.team}:${m.name}`} className="text-gray-900">
                     {m.team} {m.name}
@@ -464,13 +502,13 @@ ${renderAsList(meeting.expected_effects)}
         </div>
       </div>
 
-      <div className="w-full flex gap-8">
-        {/* Sidebar: Audio & Transcript */}
-        <div className="w-[40%] flex flex-col gap-6">
+      <div className="w-full flex flex-col gap-8 lg:flex-row">
+        {/* 오디오 및 회의록 */}
+        <div className="w-full lg:w-[40%] flex flex-col gap-6">
           <div className="bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-xl shadow-2xl flex flex-col h-[800px]">
             <h3 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-400 flex items-center gap-2 mb-6">
               <FileAudio className="w-6 h-6 text-cyan-400" />
-              Transcript
+              회의록
             </h3>
 
             {meeting.audioUrl && (
@@ -479,10 +517,10 @@ ${renderAsList(meeting.expected_effects)}
               </div>
             )}
 
-            {/* Speaker Mapping in Edit Mode */}
+            {/* 화자 매핑 수정 */}
             {isEditMode && (
               <div className="bg-white/5 p-4 rounded-xl mb-4 border border-white/10 space-y-3 animate-in slide-in-from-top-2">
-                <h4 className="text-sm font-semibold text-white/80">화자 재매핑 (Speaker Re-map)</h4>
+                <h4 className="text-sm font-semibold text-white/80">화자 다시 매핑</h4>
                 {Array.from(new Set(meeting.transcript.map(u => u.speaker))).map(speaker => (
                   <div key={speaker} className="flex items-center gap-2">
                     <span className="w-20 text-xs text-cyan-300 font-mono truncate" title={speaker}>{speaker}</span>
@@ -505,26 +543,30 @@ ${renderAsList(meeting.expected_effects)}
             )}
 
             <div className="flex-1 overflow-y-auto pr-4 space-y-4 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent pb-10">
-              {meeting.transcript.map((u, i) => (
-                <div key={i} className="flex flex-col gap-1 p-3 bg-white/[0.03] rounded-xl border border-white/5">
-                  <span className="text-xs font-bold text-fuchsia-300">
-                    {isEditMode ? (speakerMap[u.speaker] || u.speaker) : u.speaker}
-                  </span>
-                  <p className="text-white/90 text-sm leading-relaxed">{u.text}</p>
-                </div>
-              ))}
+              {meeting.transcript.length > 0 ? (
+                meeting.transcript.map((u, i) => (
+                  <div key={i} className="flex flex-col gap-1 p-3 bg-white/[0.03] rounded-xl border border-white/5">
+                    <span className="text-xs font-bold text-fuchsia-300">
+                      {isEditMode ? (speakerMap[u.speaker] || u.speaker) : u.speaker}
+                    </span>
+                    <p className="text-white/90 text-sm leading-relaxed">{u.text}</p>
+                  </div>
+                ))
+              ) : (
+                <div className="py-8 text-center text-white/30 text-sm">대화 내역이 없습니다.</div>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Main Content: Summary */}
-        <div className="w-[60%] flex flex-col gap-6">
+        {/* 분석 요약 */}
+        <div className="w-full lg:w-[60%] flex flex-col gap-6">
           <div className="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-xl shadow-2xl relative overflow-hidden flex-1 h-[800px] overflow-y-auto scrollbar-thin">
             <h3 className="text-3xl font-extrabold mb-8 flex items-center gap-3">
               <div className="bg-gradient-to-br from-fuchsia-500 to-purple-600 p-2 text-white rounded-xl">
                 <ChevronRight className="w-6 h-6" />
               </div>
-              Executive Summary
+              분석 요약
             </h3>
 
             <div className="space-y-8 relative z-10">
@@ -540,13 +582,7 @@ ${renderAsList(meeting.expected_effects)}
                   />
                 ) : (
                   <div className="p-5 bg-white/5 rounded-2xl border border-white/10 space-y-4">
-                    {meeting.asis.split("\n\n").filter(p => p.trim()).map((p, pIdx) => (
-                      <ul key={pIdx} className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
-                        {p.split("\n").filter(line => line.trim()).map((line, i) => (
-                          <li key={i}>{line.trim()}</li>
-                        ))}
-                      </ul>
-                    ))}
+                    {renderSummaryContent(meeting.asis, "현황 및 문제점 요약이 없습니다.")}
                   </div>
                 )}
               </div>
@@ -563,13 +599,7 @@ ${renderAsList(meeting.expected_effects)}
                   />
                 ) : (
                   <div className="p-5 bg-white/5 rounded-2xl border border-white/10 space-y-4">
-                    {meeting.tobe.split("\n\n").filter(p => p.trim()).map((p, pIdx) => (
-                      <ul key={pIdx} className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
-                        {p.split("\n").filter(line => line.trim()).map((line, i) => (
-                          <li key={i}>{line.trim()}</li>
-                        ))}
-                      </ul>
-                    ))}
+                    {renderSummaryContent(meeting.tobe, "개선방향 요약이 없습니다.")}
                   </div>
                 )}
               </div>
@@ -586,13 +616,7 @@ ${renderAsList(meeting.expected_effects)}
                   />
                 ) : (
                   <div className="p-5 bg-white/5 rounded-2xl border border-white/10 space-y-4">
-                    {meeting.expected_effects.split("\n\n").filter(p => p.trim()).map((p, pIdx) => (
-                      <ul key={pIdx} className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
-                        {p.split("\n").filter(line => line.trim()).map((line, i) => (
-                          <li key={i}>{line.trim()}</li>
-                        ))}
-                      </ul>
-                    ))}
+                    {renderSummaryContent(meeting.expected_effects, "기대효과 요약이 없습니다.")}
                   </div>
                 )}
               </div>
@@ -607,7 +631,7 @@ ${renderAsList(meeting.expected_effects)}
                        onClick={() => setMeeting({ ...meeting, schedule: [...meeting.schedule, { id: crypto.randomUUID(), task: "", assignee: "", dueDate: "" }] })}
                        className="text-sm px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-white font-medium transition-colors"
                      >
-                       + Add Row
+                       + 행 추가
                      </button>
                    )}
                 </div>
@@ -616,64 +640,70 @@ ${renderAsList(meeting.expected_effects)}
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="bg-white/5">
-                        <th className="p-4 font-semibold text-white/60 border-b border-white/10 w-1/2">Task</th>
-                        <th className="p-4 font-semibold text-white/60 border-b border-white/10 w-1/4">Assignee</th>
-                        <th className="p-4 font-semibold text-white/60 border-b border-white/10 w-1/4">Due Date</th>
+                        <th className="p-4 font-semibold text-white/60 border-b border-white/10 w-1/2">일감</th>
+                        <th className="p-4 font-semibold text-white/60 border-b border-white/10 w-1/4">담당자</th>
+                        <th className="p-4 font-semibold text-white/60 border-b border-white/10 w-1/4">기한</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {meeting.schedule.map((item, idx) => (
-                        <tr key={item.id || idx} className="bg-white/[0.02] border-b border-white/5 last:border-0 hover:bg-white/[0.05] transition-colors">
-                          <td className="p-0 border-r border-white/5">
-                            {isEditMode ? (
-                              <input
-                                type="text"
-                                value={item.task}
-                                onChange={e => {
-                                  const newS = [...meeting.schedule];
-                                  newS[idx].task = e.target.value;
-                                  setMeeting({ ...meeting, schedule: newS });
-                                }}
-                                className="w-full bg-transparent p-4 outline-none text-white focus:bg-white/10"
-                              />
-                            ) : (
-                              <div className="p-4 text-white">{item.task}</div>
-                            )}
-                          </td>
-                          <td className="p-0 border-r border-white/5">
-                            {isEditMode ? (
-                              <input
-                                type="text"
-                                value={item.assignee}
-                                onChange={e => {
-                                  const newS = [...meeting.schedule];
-                                  newS[idx].assignee = e.target.value;
-                                  setMeeting({ ...meeting, schedule: newS });
-                                }}
-                                className="w-full bg-transparent p-4 outline-none text-cyan-200 focus:bg-white/10"
-                              />
-                            ) : (
-                              <div className="p-4 text-cyan-200">{item.assignee}</div>
-                            )}
-                          </td>
-                          <td className="p-0">
-                            {isEditMode ? (
-                              <input
-                                type="text"
-                                value={item.dueDate}
-                                onChange={e => {
-                                  const newS = [...meeting.schedule];
-                                  newS[idx].dueDate = e.target.value;
-                                  setMeeting({ ...meeting, schedule: newS });
-                                }}
-                                className="w-full bg-transparent p-4 outline-none text-fuchsia-200 focus:bg-white/10"
-                              />
-                            ) : (
-                              <div className="p-4 text-fuchsia-200">{item.dueDate}</div>
-                            )}
-                          </td>
+                      {meeting.schedule.length > 0 ? (
+                        meeting.schedule.map((item, idx) => (
+                          <tr key={item.id || idx} className="bg-white/[0.02] border-b border-white/5 last:border-0 hover:bg-white/[0.05] transition-colors">
+                            <td className="p-0 border-r border-white/5">
+                              {isEditMode ? (
+                                <input
+                                  type="text"
+                                  value={item.task}
+                                  onChange={e => {
+                                    const newS = [...meeting.schedule];
+                                    newS[idx].task = e.target.value;
+                                    setMeeting({ ...meeting, schedule: newS });
+                                  }}
+                                  className="w-full bg-transparent p-4 outline-none text-white focus:bg-white/10"
+                                />
+                              ) : (
+                                <div className="p-4 text-white">{item.task}</div>
+                              )}
+                            </td>
+                            <td className="p-0 border-r border-white/5">
+                              {isEditMode ? (
+                                <input
+                                  type="text"
+                                  value={item.assignee}
+                                  onChange={e => {
+                                    const newS = [...meeting.schedule];
+                                    newS[idx].assignee = e.target.value;
+                                    setMeeting({ ...meeting, schedule: newS });
+                                  }}
+                                  className="w-full bg-transparent p-4 outline-none text-cyan-200 focus:bg-white/10"
+                                />
+                              ) : (
+                                <div className="p-4 text-cyan-200">{item.assignee}</div>
+                              )}
+                            </td>
+                            <td className="p-0">
+                              {isEditMode ? (
+                                <input
+                                  type="text"
+                                  value={item.dueDate}
+                                  onChange={e => {
+                                    const newS = [...meeting.schedule];
+                                    newS[idx].dueDate = e.target.value;
+                                    setMeeting({ ...meeting, schedule: newS });
+                                  }}
+                                  className="w-full bg-transparent p-4 outline-none text-fuchsia-200 focus:bg-white/10"
+                                />
+                              ) : (
+                                <div className="p-4 text-fuchsia-200">{item.dueDate}</div>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr className="bg-white/[0.02]">
+                          <td colSpan={3} className="p-5 text-center text-white/40 text-sm">등록된 일감 일정이 없습니다.</td>
                         </tr>
-                      ))}
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -684,114 +714,19 @@ ${renderAsList(meeting.expected_effects)}
       </div>
     </div>
 
-      {/* Task Template Modal */}
-      {showTaskTemplate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-in fade-in duration-300 text-left">
-          <div className="bg-slate-900 border border-white/10 w-full max-w-4xl max-h-[90vh] rounded-[2rem] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-300">
-            {/* Modal Header */}
-            <div className="p-8 border-b border-white/10 flex items-center justify-between bg-gradient-to-r from-orange-500/10 to-amber-500/10">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-orange-500 rounded-2xl text-white">
-                  <CheckSquare className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="text-2xl font-bold text-white">일감 진행 초안 생성</h3>
-                  <p className="text-orange-200/60 text-sm">회의 내용을 기반으로 단위/중점 업무 양식을 구성했습니다.</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setShowTaskTemplate(false)}
-                className="p-2 hover:bg-white/10 rounded-full text-white/40 hover:text-white transition-all"
-              >
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            {/* Modal Content */}
-            <div className="flex-1 overflow-y-auto p-8 space-y-10 scrollbar-thin max-h-[calc(90vh-200px)]">
-              {/* 단위업무 Section */}
-              <section className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-1.5 h-6 bg-amber-500 rounded-full" />
-                  <h4 className="text-xl font-bold text-white">단위 업무 (Unit Tasks)</h4>
-                </div>
-                <div className="space-y-3">
-                  {meeting.schedule.map((task, idx) => (
-                    <div key={idx} className="flex items-center gap-4 bg-white/5 border border-white/10 p-4 rounded-2xl group hover:bg-white/[0.08] transition-all">
-                      <div className="w-8 h-8 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-sm shrink-0">
-                        {idx + 1}
-                      </div>
-                      <div className="flex-1 grid grid-cols-12 gap-4">
-                        <div className="col-span-7">
-                          <label className="text-[10px] font-bold text-white/30 uppercase block mb-1">Task Name</label>
-                          <input 
-                            type="text" 
-                            defaultValue={task.task}
-                            className="bg-transparent text-white font-medium outline-none w-full"
-                          />
-                        </div>
-                        <div className="col-span-3">
-                          <label className="text-[10px] font-bold text-white/30 uppercase block mb-1">Assignee</label>
-                          <input 
-                            type="text" 
-                            defaultValue={task.assignee}
-                            className="bg-transparent text-amber-200 outline-none w-full"
-                          />
-                        </div>
-                        <div className="col-span-2 text-right">
-                          <label className="text-[10px] font-bold text-white/30 uppercase block mb-1">Due Date</label>
-                          <input 
-                            type="text" 
-                            defaultValue={task.dueDate}
-                            className="bg-transparent text-white/60 text-sm outline-none w-full text-right"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              {/* 중점업무 Section */}
-              <section className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-1.5 h-6 bg-orange-500 rounded-full" />
-                  <h4 className="text-xl font-bold text-white">중점 업무 (Key Tasks)</h4>
-                </div>
-                <div className="grid grid-cols-1 gap-4">
-                  <div className="bg-white/5 border border-white/10 rounded-2xl p-6 hover:border-orange-500/30 transition-colors">
-                    <label className="text-[10px] uppercase font-bold text-orange-400 mb-2 block tracking-widest">Strategic Goal</label>
-                    <textarea 
-                      className="w-full bg-transparent text-white text-lg font-medium leading-relaxed outline-none resize-none min-h-[100px]"
-                      defaultValue={meeting.tobe}
-                    />
-                  </div>
-                  <div className="bg-white/5 border border-white/10 rounded-2xl p-6 hover:border-orange-500/30 transition-colors">
-                    <label className="text-[10px] uppercase font-bold text-orange-400 mb-2 block tracking-widest">Expected Outcome</label>
-                    <textarea 
-                      className="w-full bg-transparent text-white/80 leading-relaxed outline-none resize-none min-h-[80px]"
-                      defaultValue={meeting.expected_effects}
-                    />
-                  </div>
-                </div>
-              </section>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-8 border-t border-white/10 bg-white/[0.02] flex items-center justify-end gap-4">
-              <button 
-                onClick={() => setShowTaskTemplate(false)}
-                className="px-6 py-3 rounded-xl text-white font-semibold hover:bg-white/10 transition-all"
-              >
-                취소
-              </button>
-              <button className="px-8 py-3 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white rounded-xl font-bold shadow-lg transform hover:-translate-y-0.5 transition-all">
-                WIKI 전송
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <WorkProgressModal
+        isOpen={showTaskTemplate}
+        onClose={() => setShowTaskTemplate(false)}
+        meetingTitle={meeting.title}
+        meetingDate={meeting.meetingDate}
+        participants={meeting.participants}
+        summary={{
+          asis: meeting.asis,
+          tobe: meeting.tobe,
+          expected_effects: meeting.expected_effects,
+          schedule: meeting.schedule,
+        }}
+      />
 
       <Modal
         isOpen={modalConfig.isOpen}

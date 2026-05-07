@@ -3,13 +3,50 @@ import prisma from '@/lib/prisma';
 
 export const runtime = 'nodejs';
 
+type MeetingParticipantInput = {
+  team: string;
+  name: string;
+};
+
+type MeetingTranscriptInput = {
+  speaker: string;
+  text: string;
+};
+
+type MeetingScheduleInput = {
+  task: string;
+  assignee: string;
+  dueDate: string;
+};
+
+type MeetingSourceType = "upload" | "realtime";
+
+type UpdateMeetingBody = {
+  title?: string;
+  sourceType?: string;
+  meetingDate?: string;
+  participants?: MeetingParticipantInput[];
+  transcript?: MeetingTranscriptInput[];
+  summary?: {
+    asis?: string;
+    tobe?: string;
+    expected_effects?: string;
+    schedule?: MeetingScheduleInput[];
+  };
+};
+
+const normalizeSourceType = (value?: string): MeetingSourceType | undefined => {
+  if (!value) return undefined;
+  return value === "realtime" ? "realtime" : "upload";
+};
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
   try {
     const { id } = await params;
-    const body = await req.json();
+    const body = await req.json() as UpdateMeetingBody;
 
     const { title, participants, transcript, summary } = body;
 
@@ -19,10 +56,11 @@ export async function PATCH(
       await tx.meeting.update({
         where: { id },
         data: {
-          title: title || undefined,
-          asis: summary?.asis || undefined,
-          tobe: summary?.tobe || undefined,
-          expected_effects: summary?.expected_effects || undefined,
+          title: title?.trim() || undefined,
+          sourceType: normalizeSourceType(body.sourceType),
+          asis: summary?.asis ?? undefined,
+          tobe: summary?.tobe ?? undefined,
+          expected_effects: summary?.expected_effects ?? undefined,
           meetingDate: body.meetingDate ? new Date(body.meetingDate) : undefined,
         }
       });
@@ -34,8 +72,8 @@ export async function PATCH(
           await tx.participant.create({
             data: {
               meetingId: id,
-              team: p.team,
-              name: p.name
+              team: p.team || "미지정",
+              name: p.name || "이름 없음"
             }
           });
         }
@@ -48,8 +86,8 @@ export async function PATCH(
           await tx.transcript.create({
             data: {
               meetingId: id,
-              speaker: t.speaker,
-              text: t.text
+              speaker: t.speaker || "알 수 없음",
+              text: t.text || ""
             }
           });
         }
@@ -62,9 +100,9 @@ export async function PATCH(
           await tx.schedule.create({
             data: {
               meetingId: id,
-              task: s.task,
-              assignee: s.assignee,
-              dueDate: s.dueDate
+              task: s.task || "",
+              assignee: s.assignee || "",
+              dueDate: s.dueDate || ""
             }
           });
         }
@@ -81,9 +119,9 @@ export async function PATCH(
     });
 
     return NextResponse.json({ success: true, meeting: updatedMeeting });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error updating meeting:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "회의록 수정 중 오류가 발생했습니다." }, { status: 500 });
   }
 }
 
@@ -95,8 +133,8 @@ export async function DELETE(
     const { id } = await params;
     await prisma.meeting.delete({ where: { id } });
     return NextResponse.json({ success: true });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: "회의록 삭제 중 오류가 발생했습니다." }, { status: 500 });
   }
 }
 
@@ -120,7 +158,7 @@ export async function GET(
     }
 
     return NextResponse.json(meeting);
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: "회의록을 불러오지 못했습니다." }, { status: 500 });
   }
 }

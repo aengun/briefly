@@ -10,9 +10,9 @@ export async function GET(): Promise<NextResponse> {
     });
 
     return NextResponse.json(members);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('GET /api/team-members error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "팀원 목록을 불러오지 못했습니다." }, { status: 500 });
   }
 }
 
@@ -22,16 +22,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const { team, name } = body;
     
     if (!team || !name) {
-      return NextResponse.json({ error: 'Missing team or name' }, { status: 400 });
+      return NextResponse.json({ error: '팀명과 이름을 입력해 주세요.' }, { status: 400 });
     }
     
     const member = await prisma.teamMember.create({
       data: { team, name }
     });
     return NextResponse.json(member);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('POST /api/team-members error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "팀원 저장 중 오류가 발생했습니다." }, { status: 500 });
   }
 }
 
@@ -41,13 +41,13 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
     const { id } = body;
     
     if (!id) {
-      return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+      return NextResponse.json({ error: '삭제할 팀원 정보가 없습니다.' }, { status: 400 });
     }
     
     await prisma.teamMember.delete({ where: { id } });
     return NextResponse.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('DELETE /api/team-members error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "팀원 삭제 중 오류가 발생했습니다." }, { status: 500 });
   }
 }

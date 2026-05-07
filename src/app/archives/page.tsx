@@ -1,14 +1,23 @@
 import prisma from '@/lib/prisma';
 import Link from 'next/link';
 import { Calendar, Users, ChevronRight, FileAudio, RefreshCcw } from 'lucide-react';
+import type { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
 
+type MeetingWithParticipants = Prisma.MeetingGetPayload<{
+  include: { participants: true };
+}>;
+
+const getSourceLabel = (sourceType?: string) => (
+  sourceType === "realtime" ? "실시간 녹화" : "업로드 파일"
+);
+
 export default async function ArchivesPage() {
-  let meetings: any[] = [];
+  let meetings: MeetingWithParticipants[] = [];
   try {
     meetings = await prisma.meeting.findMany({
-      orderBy: { meetingDate: 'desc' },
+      orderBy: { createdAt: 'desc' },
       include: { participants: true }
     });
   } catch (err) {
@@ -25,20 +34,21 @@ export default async function ArchivesPage() {
     <main className="max-w-6xl mx-auto px-4 py-8 flex flex-col gap-12">
       <div className="space-y-6 max-w-2xl mt-4 animate-in fade-in slide-in-from-bottom-8 duration-700">
         <h2 className="text-4xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-400">
-          회의 기록 보관소
+          회의록 보관소
         </h2>
         <p className="text-lg text-purple-200/80 leading-relaxed">
-          과거의 모든 회의 기록과 요약본을 안전하게 아카이빙합니다. 언제든지 다시 검토하세요.
+          저장된 회의록과 분석 결과를 한곳에서 확인하고 다시 분석할 수 있습니다.
         </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-12 duration-1000 delay-150 fill-mode-both">
         {safeMeetings.length === 0 ? (
           <div className="col-span-full py-12 text-center bg-white/5 rounded-3xl border border-white/10 backdrop-blur-xl">
-            <h3 className="text-xl text-white/50 font-medium">저장된 회의 기록이 없습니다.</h3>
+            <h3 className="text-xl text-white/50 font-medium">저장된 회의록이 없습니다.</h3>
+            <p className="mt-2 text-sm text-white/35">분석이 완료되면 회의록 보관소에 자동으로 저장됩니다.</p>
           </div>
         ) : (
-          safeMeetings.map((m: any) => (
+          safeMeetings.map((m) => (
             <div 
               key={m.id} 
               className="bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-xl shadow-lg group flex flex-col gap-4 relative"
@@ -68,6 +78,13 @@ export default async function ArchivesPage() {
               </div>
               
               <div className="space-y-2 relative z-10 pointer-events-none">
+                <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-bold ${
+                  m.sourceType === "realtime"
+                    ? "border-rose-400/30 bg-rose-500/15 text-rose-200"
+                    : "border-cyan-400/30 bg-cyan-500/15 text-cyan-200"
+                }`}>
+                  {getSourceLabel(m.sourceType)}
+                </span>
                 <h3 className="text-xl font-bold text-white line-clamp-1">{m.title || "제목 없는 회의"}</h3>
                 <div className="flex items-center gap-2 text-sm text-cyan-300 font-medium">
                   <Calendar className="w-4 h-4" />

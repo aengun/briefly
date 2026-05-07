@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { CheckCircle2, AlertCircle, HelpCircle, X } from "lucide-react";
+import { CheckCircle2, AlertCircle, HelpCircle } from "lucide-react";
 
 interface ModalProps {
   isOpen: boolean;

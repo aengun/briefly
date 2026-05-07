@@ -1,11 +1,20 @@
 import prisma from '@/lib/prisma';
 import { notFound } from 'next/navigation';
 import MeetingDetailClient from '@/components/MeetingDetailClient';
+import type { Prisma } from '@prisma/client';
+
+type MeetingDetailRecord = Prisma.MeetingGetPayload<{
+  include: {
+    participants: true;
+    transcript: true;
+    schedule: true;
+  };
+}>;
 
 export default async function MeetingDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   
-  const meetingRecord = await prisma.meeting.findUnique({
+  const meetingRecord: MeetingDetailRecord | null = await prisma.meeting.findUnique({
     where: { id },
     include: {
       participants: true,
@@ -21,10 +30,10 @@ export default async function MeetingDetailPage({ params }: { params: Promise<{ 
   }
 
   // Format record to match component expectations
-  const meeting: any = {
+  const meeting = {
     ...meetingRecord,
-    createdAt: (meetingRecord as any).createdAt.toISOString(),
-    meetingDate: (meetingRecord as any).meetingDate?.toISOString() || (meetingRecord as any).createdAt.toISOString(),
+    createdAt: meetingRecord.createdAt.toISOString(),
+    meetingDate: meetingRecord.meetingDate?.toISOString() || meetingRecord.createdAt.toISOString(),
     participants: meetingRecord.participants.map(p => ({
       id: p.id,
       team: p.team,

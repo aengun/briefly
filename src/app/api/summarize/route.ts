@@ -8,20 +8,33 @@ import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { Buffer } from 'node:buffer';
 
+type SummaryPayload = {
+  summary?: {
+    asis?: string;
+    tobe?: string;
+    expected_effects?: string;
+    schedule?: Array<{ task?: string; assignee?: string; dueDate?: string }>;
+  };
+};
+
+type TranscriptPayload = {
+  transcript?: Array<{ speaker?: string; text?: string }>;
+};
+
 // Initialize Gemini API
 const apiKey = process.env.GEMINI_API_KEY || '';
 const genAI = new GoogleGenerativeAI(apiKey);
 const fileManager = new GoogleAIFileManager(apiKey);
 
 // Robust JSON extraction helper
-function extractJSON(text: string): any {
+function extractJSON(text: string): unknown {
   try {
     // Try finding JSON block
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return null;
     
     // Basic cleanup of common AI artifacts in JSON
-    let jsonStr = match[0]
+    const jsonStr = match[0]
       .replace(/\\n/g, "\\n")
       .replace(/\\'/g, "'");
       
@@ -32,13 +45,17 @@ function extractJSON(text: string): any {
   }
 }
 
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     const formData = await req.formData();
     const file = formData.get('file') as File;
 
     if (!file) {
-      return NextResponse.json({ error: 'No file provided' }, { status: 400 });
+      return NextResponse.json({ error: '분석할 오디오 파일이 없습니다.' }, { status: 400 });
     }
 
     // Save file to public/uploads
@@ -76,10 +93,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       'gemini-1.5-flash'
     ];
 
-    let lastError = null;
+    let lastError: unknown = null;
     let successfulModel = "";
-    let summaryData = null;
-    let transcriptData = null;
+    let summaryData: SummaryPayload | null = null;
+    let transcriptData: TranscriptPayload | null = null;
 
     for (const modelName of modelsToTry) {
       try {
@@ -108,7 +125,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           { fileData: { fileUri: uploadResult.file.uri, mimeType: uploadResult.file.mimeType } },
           summaryPrompt,
         ]);
-        summaryData = extractJSON(sResult.response.text());
+        summaryData = extractJSON(sResult.response.text()) as SummaryPayload | null;
         if (!summaryData) continue;
 
         // --- STEP 2: TRANSCRIPT PASS ---
@@ -126,21 +143,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           { fileData: { fileUri: uploadResult.file.uri, mimeType: uploadResult.file.mimeType } },
           transcriptPrompt,
         ]);
-        transcriptData = extractJSON(tResult.response.text());
+        transcriptData = extractJSON(tResult.response.text()) as TranscriptPayload | null;
         
         successfulModel = modelName;
         break; // 성공 시 루프 탈출
-      } catch (err: any) {
+      } catch (err: unknown) {
         lastError = err;
-        console.warn(`Model ${modelName} failed, trying next...`, err.message);
+        console.warn(`Model ${modelName} failed, trying next...`, getErrorMessage(err));
         continue;
       }
     }
 
     if (!summaryData) {
-      const errMsg = lastError?.message || "";
+      const errMsg = getErrorMessage(lastError);
       if (errMsg.includes("429")) return NextResponse.json({ error: "현재 AI 사용량이 많아 잠시 후 다시 시도해주세요. (할당량 초과)" }, { status: 429 });
-      if (errMsg.includes("503")) return NextResponse.json({ error: "AI 서버가 일시적으로 응답하지 않습니다. 잠시 후 다시 시도해주세요." }, { status: 503 });
+      if (errMsg.includes("503")) return NextResponse.json({ error: "분석 서버가 일시적으로 응답하지 않습니다. 잠시 후 다시 시도해주세요." }, { status: 503 });
       return NextResponse.json({ error: "분석 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요." }, { status: 500 });
     }
 
@@ -151,8 +168,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       usedModel: successfulModel // 어떤 모델이 사용되었는지 반환
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error during summarization:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "분석 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요." }, { status: 500 });
   }
 }

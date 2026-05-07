@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { UploadCloud, FileAudio, Loader2, CheckCircle2, ChevronRight, Download, Users, UserPlus, Save, Mic, MicOff, Square, Play, RefreshCcw, LayoutGrid, CheckSquare, X, FileText } from "lucide-react";
+import { UploadCloud, FileAudio, Loader2, CheckCircle2, ChevronRight, Download, Users, UserPlus, Save, Mic, MicOff, Square, Play, LayoutGrid, FileText } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Modal from "../components/Modal";
+import WorkProgressModal from "../components/WorkProgressModal";
 
 // Define the interfaces based on our DB types
 type ScheduleItem = {
@@ -16,6 +17,8 @@ type TranscriptUtterance = {
   speaker: string;
   text: string;
 };
+
+type SourceType = "upload" | "realtime";
 
 type SummaryResult = {
   audioUrl: string;
@@ -40,6 +43,53 @@ type TeamMember = {
   name: string;
 };
 
+type ReanalysisMeeting = {
+  audioUrl?: string;
+  participants?: Participant[];
+  sourceType?: SourceType;
+};
+
+type SavedMeeting = {
+  id: string;
+};
+
+const escapeHtml = (value: string) => value
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;")
+  .replace(/'/g, "&#39;");
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+const normalizeSummaryResult = (value: Partial<SummaryResult>): SummaryResult => ({
+  audioUrl: value.audioUrl || "",
+  transcript: Array.isArray(value.transcript)
+    ? value.transcript.map((item) => ({
+      speaker: item?.speaker || "알 수 없음",
+      text: item?.text || ""
+    }))
+    : [],
+  summary: {
+    asis: value.summary?.asis || "",
+    tobe: value.summary?.tobe || "",
+    expected_effects: value.summary?.expected_effects || "",
+    schedule: Array.isArray(value.summary?.schedule)
+      ? value.summary.schedule.map((item) => ({
+        task: item?.task || "",
+        assignee: item?.assignee || "",
+        dueDate: item?.dueDate || ""
+      }))
+      : []
+  }
+});
+
+const getDefaultTitle = (targetFile: File, sourceType: SourceType) => {
+  const baseName = targetFile.name.replace(/\.[^/.]+$/, "").trim();
+  if (baseName) return baseName;
+  return sourceType === "realtime" ? `실시간 녹화 ${new Date().toLocaleString("ko-KR")}` : "제목 없는 회의록";
+};
+
 export default function Home() {
   const router = useRouter();
 
@@ -62,8 +112,11 @@ export default function Home() {
   const analysisTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [meetingTitle, setMeetingTitle] = useState("");
   const [meetingDate, setMeetingDate] = useState("");
-  const [isSendingToConfluence, setIsSendingToConfluence] = useState(false);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [savedMeetingId, setSavedMeetingId] = useState<string | null>(null);
+  const [resultSourceType, setResultSourceType] = useState<SourceType>("upload");
+  const [archiveStatusMessage, setArchiveStatusMessage] = useState<string | null>(null);
+  const [archiveErrorMessage, setArchiveErrorMessage] = useState<string | null>(null);
 
   // Custom Modal State
   const [modalConfig, setModalConfig] = useState<{
@@ -106,7 +159,7 @@ export default function Home() {
   const [showTaskTemplate, setShowTaskTemplate] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 재분석(Re-analyze) 감지 로직
+  // 재분석 파라미터는 최초 진입 시 한 번만 처리한다.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const meetingId = params.get("reanalyze");
@@ -118,7 +171,7 @@ export default function Home() {
           // 1. 회의 정보 조회
           const res = await fetch(`/api/meetings/${meetingId}`);
           if (!res.ok) throw new Error("회의 정보를 불러오지 못했습니다.");
-          const meeting = await res.json();
+          const meeting = await res.json() as ReanalysisMeeting;
           
           if (!meeting.audioUrl) throw new Error("오디오 파일 경로가 없습니다.");
           
@@ -130,7 +183,7 @@ export default function Home() {
           
           // 3. 기존 참여자 정보가 있다면 세팅 (선택사항)
           if (meeting.participants && meeting.participants.length > 0) {
-            setParticipants(meeting.participants.map((p: any) => ({
+            setParticipants(meeting.participants.map((p) => ({
               id: p.id || crypto.randomUUID(),
               team: p.team,
               name: p.name
@@ -139,17 +192,18 @@ export default function Home() {
 
           setFile(reanalysisFile);
           // 4. 분석 시작
-          handleUpload(reanalysisFile);
+          handleUpload(reanalysisFile, meeting.sourceType || "upload");
           
           // URL 파라미터 정리 (무한 루프 방지)
           window.history.replaceState({}, document.title, "/");
-        } catch (err: any) {
-          setError(`재분석 실패: ${err.message}`);
+        } catch (err: unknown) {
+          setError(`재분석 실패: ${getErrorMessage(err)}`);
           setIsUploading(false);
         }
       };
       loadAndAnalyze();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Prevent Hydration mismatch by setting initial date on client only
@@ -198,7 +252,6 @@ export default function Home() {
         const data = new Uint8Array(analyserRef.current.frequencyBinCount);
         analyserRef.current.getByteFrequencyData(data);
         const bands = 12;
-        const binSize = Math.floor(data.length / bands);
         // 고주파수 영역도 더 잘 보이도록 로그 스케일에 가깝게 매핑 조정
         const levels = Array.from({ length: bands }, (_, i) => {
           const start = Math.floor(Math.pow(i / bands, 1.5) * data.length);
@@ -235,6 +288,9 @@ export default function Home() {
         setFile(recordedFile);
         setResult(null);
         setError(null);
+        setSavedMeetingId(null);
+        setArchiveStatusMessage(null);
+        setArchiveErrorMessage(null);
         stream.getTracks().forEach(track => track.stop());
         audioCtx.close();
       };
@@ -268,6 +324,9 @@ export default function Home() {
     setFile(null);
     setRecordingTime(0);
     setError(null);
+    setSavedMeetingId(null);
+    setArchiveStatusMessage(null);
+    setArchiveErrorMessage(null);
   };
 
   const handleAddParticipant = () => {
@@ -292,6 +351,9 @@ export default function Home() {
       setFile(e.target.files[0]);
       setResult(null);
       setError(null);
+      setSavedMeetingId(null);
+      setArchiveStatusMessage(null);
+      setArchiveErrorMessage(null);
     }
   };
 
@@ -301,16 +363,95 @@ export default function Home() {
       setFile(e.dataTransfer.files[0]);
       setResult(null);
       setError(null);
+      setSavedMeetingId(null);
+      setArchiveStatusMessage(null);
+      setArchiveErrorMessage(null);
     }
   };
 
-  const handleUpload = async (fileOverride?: File) => {
+  const mergeAutoParticipants = (
+    baseParticipants: Participant[],
+    transcript: TranscriptUtterance[],
+    shouldAutoAdd: boolean
+  ) => {
+    if (!shouldAutoAdd) return baseParticipants;
+
+    const existingNames = new Set(baseParticipants.map(p => p.name));
+    const uniqueSpeakers = [...new Set(transcript.map(u => u.speaker).filter(Boolean))];
+    const newParticipants = uniqueSpeakers
+      .filter(speaker => !existingNames.has(speaker))
+      .map(speaker => ({
+        id: crypto.randomUUID(),
+        team: "미지정",
+        name: speaker
+      }));
+
+    return [...baseParticipants, ...newParticipants];
+  };
+
+  const persistMeetingToArchive = async ({
+    meetingResult,
+    title,
+    sourceType,
+    participantsForSave,
+    transcriptMap,
+    existingMeetingId
+  }: {
+    meetingResult: SummaryResult;
+    title: string;
+    sourceType: SourceType;
+    participantsForSave: Participant[];
+    transcriptMap: Record<string, string>;
+    existingMeetingId?: string | null;
+  }) => {
+    const mappedTranscript = meetingResult.transcript.map(u => ({
+      speaker: transcriptMap[u.speaker] || u.speaker || "알 수 없음",
+      text: u.text || ""
+    }));
+
+    const payload = {
+      title: title.trim() || "제목 없는 회의록",
+      sourceType,
+      meetingDate: meetingDate || new Date().toISOString().split("T")[0],
+      audioUrl: meetingResult.audioUrl,
+      participants: participantsForSave.map(p => ({
+        team: p.team || "미지정",
+        name: p.name || "이름 없음"
+      })),
+      transcript: mappedTranscript,
+      summary: meetingResult.summary
+    };
+
+    const res = await fetch(existingMeetingId ? `/api/meetings/${existingMeetingId}` : "/api/meetings", {
+      method: existingMeetingId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await res.json().catch(() => null) as { meeting?: SavedMeeting; error?: string } | null;
+    if (!res.ok) {
+      throw new Error(data?.error || "회의록 저장에 실패했습니다. 다시 시도해주세요.");
+    }
+
+    if (!data?.meeting?.id) {
+      throw new Error("회의록 저장 응답을 확인하지 못했습니다.");
+    }
+
+    return data.meeting;
+  };
+
+  const handleUpload = async (fileOverride?: File, sourceTypeOverride?: SourceType) => {
     const targetFile = fileOverride ?? file;
     if (!targetFile) return;
+    const sourceType = sourceTypeOverride ?? (activeTab === "record" ? "realtime" : "upload");
 
     setIsUploading(true);
     setAnalysisTime(0);
     setError(null);
+    setSavedMeetingId(null);
+    setResultSourceType(sourceType);
+    setArchiveStatusMessage(null);
+    setArchiveErrorMessage(null);
 
     // 분석 타이머 시작
     analysisTimerRef.current = setInterval(() => {
@@ -328,48 +469,66 @@ export default function Home() {
 
       if (!response.ok) throw new Error(await response.text());
 
-      const data = await response.json();
-      setResult(data);
-      setMeetingTitle(targetFile.name.replace(/\.[^/.]+$/, ""));
+      const data = await response.json() as Partial<SummaryResult> & { usedModel?: string };
+      const normalizedResult = normalizeSummaryResult(data);
+      const defaultTitle = getDefaultTitle(targetFile, sourceType);
+      setResult(normalizedResult);
+      setMeetingTitle(defaultTitle);
 
       if (data.usedModel) {
         console.log(`Used AI Model: ${data.usedModel}`);
       }
       
       const initialMap: Record<string, string> = {};
-      if (Array.isArray(data.transcript)) {
-        data.transcript.forEach((u: TranscriptUtterance) => {
+      if (Array.isArray(normalizedResult.transcript)) {
+        normalizedResult.transcript.forEach((u: TranscriptUtterance) => {
           if (!initialMap[u.speaker]) initialMap[u.speaker] = "";
         });
       }
       setSpeakerMap(initialMap);
 
       // 자동 참여자 추가: transcript 화자 → participants
-      if (autoAddParticipants && Array.isArray(data.transcript)) {
-        const uniqueSpeakers = [...new Set(
-          data.transcript.map((u: TranscriptUtterance) => u.speaker)
-        )] as string[];
-        
-        setParticipants(prev => {
-          const existingNames = new Set(prev.map(p => p.name));
-          const newOnes = uniqueSpeakers
-            .filter(speaker => !existingNames.has(speaker))
-            .map(speaker => ({
-              id: crypto.randomUUID(),
-              team: "미지정",
-              name: speaker
-            }));
-          return [...prev, ...newOnes];
+      const nextParticipants = mergeAutoParticipants(participants, normalizedResult.transcript, autoAddParticipants);
+      if (autoAddParticipants) {
+        setParticipants(nextParticipants);
+      }
+
+      try {
+        const savedMeeting = await persistMeetingToArchive({
+          meetingResult: normalizedResult,
+          title: defaultTitle,
+          sourceType,
+          participantsForSave: nextParticipants,
+          transcriptMap: initialMap,
+          existingMeetingId: null
+        });
+        setSavedMeetingId(savedMeeting.id);
+        setArchiveStatusMessage("회의록 보관소에 저장되었습니다.");
+        showModal({
+          title: "저장 완료",
+          message: "회의록 보관소에 저장되었습니다.",
+          type: "success"
+        });
+      } catch (saveErr: unknown) {
+        const saveMessage = "회의록 저장에 실패했습니다. 다시 시도해주세요.";
+        setArchiveErrorMessage(saveMessage);
+        showModal({
+          title: "저장 실패",
+          message: getErrorMessage(saveErr) || saveMessage,
+          type: "error"
         });
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = getErrorMessage(err);
       let friendlyError = "분석 중 알 수 없는 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
-      if (err.message.includes("429")) {
+      if (message.includes("SERVICE_DISABLED") || message.includes("Gemini API has not been used")) {
+        friendlyError = "Gemini 연동이 현재 이 Google 프로젝트에서 활성화되어 있지 않습니다. Google Cloud Console에서 Generative Language API를 활성화해 주세요.";
+      } else if (message.includes("429")) {
         friendlyError = "현재 AI 사용량이 많아 잠시 후 다시 시도해 주세요. (할당량 초과)";
-      } else if (err.message.includes("503") || err.message.includes("Service Unavailable")) {
-        friendlyError = "AI 서버가 일시적으로 바쁩니다. 약 1분 후 다시 시도해 주세요.";
-      } else if (err.message.includes("403")) {
-        friendlyError = "API 권한 오류가 발생했습니다. 키 설정을 확인해 주세요.";
+      } else if (message.includes("503") || message.includes("Service Unavailable")) {
+        friendlyError = "분석 서버가 일시적으로 바쁩니다. 약 1분 후 다시 시도해 주세요.";
+      } else if (message.includes("403")) {
+        friendlyError = "연동 권한 오류가 발생했습니다. 키 설정을 확인해 주세요.";
       }
       setError(friendlyError);
       showModal({
@@ -401,13 +560,28 @@ export default function Home() {
     }
   };
 
+  const renderSummaryContent = (text: string, emptyMessage: string) => {
+    const paragraphs = text.split("\n\n").filter(p => p.trim());
+    if (paragraphs.length === 0) {
+      return <p className="text-white/40 text-sm">{emptyMessage}</p>;
+    }
+
+    return paragraphs.map((p, pIdx) => (
+      <ul key={pIdx} className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
+        {p.split("\n").filter(line => line.trim()).map((line, i) => (
+          <li key={i}>{line.trim()}</li>
+        ))}
+      </ul>
+    ));
+  };
+
   const renderAsList = (text: string) => {
     return text.split("\n\n")
       .filter(p => p.trim())
       .map(p => {
         const items = p.split("\n")
           .filter(line => line.trim())
-          .map(line => `<li>${line.trim()}</li>`)
+          .map(line => `<li>${escapeHtml(line.trim())}</li>`)
           .join("");
         return `<ul>${items}</ul>`;
       })
@@ -417,36 +591,31 @@ export default function Home() {
   const handleSaveToArchive = async () => {
     if (!result) return;
     setIsSaving(true);
+    setArchiveStatusMessage(null);
+    setArchiveErrorMessage(null);
     try {
-      const mappedTranscript = result.transcript.map(u => ({
-        speaker: speakerMap[u.speaker] || u.speaker,
-        text: u.text
-      }));
-
-      const res = await fetch("/api/meetings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: meetingTitle || "제목 없음",
-          meetingDate: meetingDate,
-          audioUrl: result.audioUrl,
-          participants,
-          transcript: mappedTranscript,
-          summary: result.summary,
-        })
+      const savedMeeting = await persistMeetingToArchive({
+        meetingResult: result,
+        title: meetingTitle || "제목 없는 회의록",
+        sourceType: resultSourceType,
+        participantsForSave: participants,
+        transcriptMap: speakerMap,
+        existingMeetingId: savedMeetingId
       });
-
-      if (!res.ok) throw new Error(await res.text());
+      setSavedMeetingId(savedMeeting.id);
+      setArchiveStatusMessage("회의록 보관소에 저장되었습니다.");
       showModal({
         title: "저장 완료",
-        message: "보관소에 성공적으로 저장되었습니다!",
+        message: "회의록 보관소에 저장되었습니다.",
         type: "success"
       });
       router.push("/archives");
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const saveMessage = "회의록 저장에 실패했습니다. 다시 시도해주세요.";
+      setArchiveErrorMessage(saveMessage);
       showModal({
         title: "저장 실패",
-        message: err.message,
+        message: getErrorMessage(err) || saveMessage,
         type: "error"
       });
     } finally {
@@ -469,17 +638,17 @@ ${renderAsList(summary.expected_effects)}
 <table border="1" style="border-collapse: collapse; width: 100%;">
   <thead>
     <tr style="background-color: #f2f2f2;">
-      <th style="padding: 8px; text-align: left;">Task</th>
-      <th style="padding: 8px; text-align: left;">Assignee</th>
-      <th style="padding: 8px; text-align: left;">Due Date</th>
+      <th style="padding: 8px; text-align: left;">일감</th>
+      <th style="padding: 8px; text-align: left;">담당자</th>
+      <th style="padding: 8px; text-align: left;">기한</th>
     </tr>
   </thead>
   <tbody>
     ${summary.schedule.map(item => `
     <tr>
-      <td style="padding: 8px;">${item.task}</td>
-      <td style="padding: 8px;">${item.assignee}</td>
-      <td style="padding: 8px;">${item.dueDate}</td>
+      <td style="padding: 8px;">${escapeHtml(item.task)}</td>
+      <td style="padding: 8px;">${escapeHtml(item.assignee)}</td>
+      <td style="padding: 8px;">${escapeHtml(item.dueDate)}</td>
     </tr>
     `).join("")}
   </tbody>
@@ -489,7 +658,7 @@ ${renderAsList(summary.expected_effects)}
     navigator.clipboard.writeText(html).then(() => {
       showModal({
         title: "복사 완료",
-        message: "HTML 형식이 클립보드에 복사되었습니다.",
+        message: "문서 형식이 클립보드에 복사되었습니다.",
         type: "success"
       });
     }).catch(err => {
@@ -502,90 +671,6 @@ ${renderAsList(summary.expected_effects)}
     });
   };
 
-  const handleSendToConfluence = () => {
-    showModal({
-      title: "WIKI 전송",
-      message: "이 내용을 Confluence로 전송하시겠습니까?",
-      type: "confirm",
-      onConfirm: async () => {
-        closeModal();
-        await executeSendToConfluence();
-      }
-    });
-  };
-
-  const executeSendToConfluence = async () => {
-    if (!result) return;
-    setIsSendingToConfluence(true);
-    try {
-      const { summary } = result;
-      const html = `
-<h3>1. 현황 및 문제점</h3>
-${renderAsList(summary.asis)}
-<h3>2. 개선방향 (목적)</h3>
-${renderAsList(summary.tobe)}
-<h3>3. 기대효과</h3>
-${renderAsList(summary.expected_effects)}
-<h3>4. 일감내용 및 일정</h3>
-<table border="1" style="border-collapse: collapse; width: 100%;">
-  <thead>
-    <tr style="background-color: #f2f2f2;">
-      <th style="padding: 8px; text-align: left;">Task</th>
-      <th style="padding: 8px; text-align: left;">Assignee</th>
-      <th style="padding: 8px; text-align: left;">Due Date</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${summary.schedule.map((item: ScheduleItem) => `
-    <tr>
-      <td style="padding: 8px;">${item.task}</td>
-      <td style="padding: 8px;">${item.assignee}</td>
-      <td style="padding: 8px;">${item.dueDate}</td>
-    </tr>
-    `).join("")}
-  </tbody>
-</table>
-      `.trim();
-
-      const dateObj = new Date(meetingDate);
-      const formattedDate = dateObj.getFullYear().toString() + "-" + 
-                          (dateObj.getMonth() + 1).toString().padStart(2, '0') + "-" + 
-                          dateObj.getDate().toString().padStart(2, '0');
-
-      const res = await fetch("/api/confluence", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: `[${formattedDate}] ${meetingTitle}`,
-          html: html
-        })
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Confluence 전송 실패");
-
-      showModal({
-        title: "전송 완료",
-        message: "Confluence 페이지가 생성되었습니다.",
-        type: "confirm",
-        confirmText: "확인하기",
-        cancelText: "닫기",
-        onConfirm: () => {
-          closeModal();
-          window.open(data.url, "_blank");
-        }
-      });
-    } catch (err: any) {
-      showModal({
-        title: "전송 실패",
-        message: err.message,
-        type: "error"
-      });
-    } finally {
-      setIsSendingToConfluence(false);
-    }
-  };
-
   return (
     <>
     <main className="max-w-6xl mx-auto px-4 py-8 flex flex-col gap-12">
@@ -593,11 +678,11 @@ ${renderAsList(summary.expected_effects)}
       {!result && (
         <div className="text-center space-y-6 max-w-2xl mx-auto mt-4 animate-in fade-in slide-in-from-bottom-8 duration-700">
           <h2 className="text-5xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-fuchsia-400 to-cyan-400">
-            Transform meetings<br />into actionable insights.
+            회의 녹음을<br />실행 가능한 회의록으로
           </h2>
           <p className="text-lg text-purple-200/80 leading-relaxed">
-            오디오 녹음 파일을 업로드하세요. Briefly가 참석자 식별과 함께 STT를 진행하고,
-            현업 요구사항에 맞춘 As-is, To-be, 기대효과, 일정 테이블을 자동 생성합니다.
+            오디오 녹음 파일을 업로드하세요. Briefly가 참석자 식별과 회의록 분석을 진행하고,
+            현업 요구사항에 맞춘 현황, 개선방향, 기대효과, 일감 일정을 자동 생성합니다.
           </p>
         </div>
       )}
@@ -614,7 +699,7 @@ ${renderAsList(summary.expected_effects)}
             <span className={`text-sm font-medium transition-colors duration-200 ${
               autoAddParticipants ? "text-cyan-300" : "text-white/30"
             }`}>
-              AI 자동인식
+              자동 인식
             </span>
             <button
               role="switch"
@@ -641,7 +726,7 @@ ${renderAsList(summary.expected_effects)}
               autoAddParticipants ? "opacity-50 cursor-not-allowed" : ""
             }`}
           >
-            <option value="" disabled className="text-gray-900">IT 팀원 선택 (필수참여)</option>
+            <option value="" disabled className="text-gray-900">팀원 선택</option>
             {teamMembers.map(m => (
               <option key={m.id} value={`${m.team}:${m.name}`} className="text-gray-900">
                 {m.team} {m.name}
@@ -760,7 +845,7 @@ ${renderAsList(summary.expected_effects)}
                     <h3 className="text-xl font-semibold text-white truncate max-w-[250px]">{file.name}</h3>
                     <p className="text-purple-300/80 text-sm">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
                     <button
-                      onClick={(e) => { e.stopPropagation(); handleUpload(); }}
+                      onClick={(e) => { e.stopPropagation(); handleUpload(undefined, "upload"); }}
                       className="mt-6 bg-gradient-to-r from-fuchsia-600 to-cyan-600 hover:from-fuchsia-500 hover:to-cyan-500 text-white px-8 py-3 rounded-full font-semibold transition-all shadow-lg transform hover:-translate-y-0.5"
                     >
                       분석 및 요약 시작하기
@@ -777,12 +862,12 @@ ${renderAsList(summary.expected_effects)}
                     <div className="bg-white/10 p-5 rounded-full ring-1 ring-white/20 mb-2">
                       <FileAudio className="w-10 h-10 text-cyan-300" />
                     </div>
-                    <h3 className="text-xl font-semibold text-white">오디오 파일 업로드 (또는 드래그 앤 드롭)</h3>
-                    <p className="text-purple-300/80 text-sm">MP3, WAV, M4A 등 지원</p>
+                    <h3 className="text-xl font-semibold text-white">음성/영상 파일 업로드 (또는 드래그 앤 드롭)</h3>
+                    <p className="text-purple-300/80 text-sm">MP3, WAV, M4A, MP4, WEBM 등 지원</p>
                   </>
                 )}
               </div>
-              <input type="file" accept="audio/*" className="hidden" ref={fileInputRef} onChange={handleFileChange} disabled={isUploading} />
+              <input type="file" accept="audio/*,video/*" className="hidden" ref={fileInputRef} onChange={handleFileChange} disabled={isUploading} />
             </div>
           )}
 
@@ -818,8 +903,8 @@ ${renderAsList(summary.expected_effects)}
                     </div>
                     <audio controls src={audioUrl} className="w-full max-w-sm rounded-xl" />
                     <div className="flex gap-3 mt-2">
-                      <button
-                        onClick={() => handleUpload(recordedFileRef.current ?? undefined)}
+                    <button
+                        onClick={() => handleUpload(recordedFileRef.current ?? undefined, "realtime")}
                         className="flex items-center gap-2 bg-gradient-to-r from-fuchsia-600 to-cyan-600 hover:from-fuchsia-500 hover:to-cyan-500 text-white px-8 py-3 rounded-full font-semibold transition-all shadow-lg transform hover:-translate-y-0.5"
                       >
                         <Play className="w-4 h-4" />
@@ -893,7 +978,7 @@ ${renderAsList(summary.expected_effects)}
 
           {error && (
             <div className="mt-4 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-200 text-sm flex items-start gap-3">
-              <span className="shrink-0 font-bold bg-red-500/20 text-red-400 p-1 rounded-md">Error</span>
+              <span className="shrink-0 font-bold bg-red-500/20 text-red-400 p-1 rounded-md">오류</span>
               <span>{error}</span>
             </div>
           )}
@@ -903,9 +988,9 @@ ${renderAsList(summary.expected_effects)}
       {/* 4. Result Section */}
       {result && (
         <section className="w-full flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
-          <div className="flex items-end gap-4 flex-1 bg-white/5 border border-white/10 p-4 pb-5 rounded-2xl backdrop-blur-xl">
+          <div className="flex flex-col gap-4 bg-white/5 border border-white/10 p-4 pb-5 rounded-2xl backdrop-blur-xl xl:flex-row xl:items-end">
             <div className="flex flex-col gap-1 flex-1">
-              <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold ml-2">Meeting Title</label>
+              <label className="text-[10px] tracking-widest text-white/40 font-bold ml-2">회의록 제목</label>
               <input
                 type="text"
                 value={meetingTitle}
@@ -914,9 +999,9 @@ ${renderAsList(summary.expected_effects)}
                 placeholder="회의 제목을 입력하세요"
               />
             </div>
-            <div className="w-px h-10 bg-white/10 mx-2 mb-1" />
+            <div className="hidden w-px h-10 bg-white/10 mx-2 mb-1 xl:block" />
             <div className="flex flex-col gap-1">
-              <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold ml-2">Meeting Date</label>
+              <label className="text-[10px] tracking-widest text-white/40 font-bold ml-2">회의일</label>
               <input
                 type="date"
                 value={meetingDate}
@@ -924,7 +1009,17 @@ ${renderAsList(summary.expected_effects)}
                 className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white outline-none focus:border-cyan-400 transition-all text-sm h-[42px]"
               />
             </div>
-            <div className="ml-auto flex items-center gap-3 mb-0.5">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] tracking-widest text-white/40 font-bold ml-2">분석 출처</label>
+              <span className={`inline-flex h-[42px] items-center rounded-xl border px-4 text-sm font-bold ${
+                resultSourceType === "realtime"
+                  ? "border-rose-400/30 bg-rose-500/15 text-rose-200"
+                  : "border-cyan-400/30 bg-cyan-500/15 text-cyan-200"
+              }`}>
+                {resultSourceType === "realtime" ? "실시간 녹화" : "업로드 파일"}
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 mb-0.5 xl:ml-auto">
               <button
                 onClick={() => setShowTaskTemplate(true)}
                 className="flex items-center gap-2 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-white px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg border border-white/10"
@@ -937,7 +1032,7 @@ ${renderAsList(summary.expected_effects)}
                 className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white px-6 py-2.5 rounded-xl font-semibold transition-all border border-white/10"
               >
                 <Download className="w-5 h-5" />
-                HTML로 복사
+                문서 형식 복사
               </button>
               <button
                 onClick={handleSaveToArchive}
@@ -945,14 +1040,23 @@ ${renderAsList(summary.expected_effects)}
                 className="flex items-center gap-2 bg-gradient-to-r from-fuchsia-600 to-cyan-600 hover:from-fuchsia-500 hover:to-cyan-500 text-white px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg"
               >
                 {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-                보관소에 저장
+                {savedMeetingId ? "보관소 업데이트" : "보관소에 저장"}
               </button>
             </div>
           </div>
+          {(archiveStatusMessage || archiveErrorMessage) && (
+            <div className={`rounded-2xl border px-5 py-3 text-sm font-medium ${
+              archiveErrorMessage
+                ? "border-rose-500/30 bg-rose-500/10 text-rose-100"
+                : "border-green-500/30 bg-green-500/10 text-green-100"
+            }`}>
+              {archiveErrorMessage || archiveStatusMessage}
+            </div>
+          )}
 
-          <div className="w-full flex gap-8">
-            {/* Transcript */}
-            <div className="w-[40%] flex flex-col gap-6">
+          <div className="w-full flex flex-col gap-8 lg:flex-row">
+            {/* 회의록 */}
+            <div className="w-full lg:w-[40%] flex flex-col gap-6">
               {/* Speaker Mapping Section */}
               <div className="bg-white/5 border border-white/10 p-6 rounded-2xl backdrop-blur-xl">
                 <h4 className="text-sm font-bold text-white/50 mb-4 uppercase tracking-wider flex items-center gap-2">
@@ -983,7 +1087,7 @@ ${renderAsList(summary.expected_effects)}
                 
                 <h4 className="text-sm font-bold text-white/50 mb-4 uppercase tracking-wider flex items-center gap-2 pt-4 border-t border-white/5">
                   <FileText className="w-4 h-4" />
-                  대화 내역 (Transcript)
+                  회의록 대화 내역
                 </h4>
                 <div className="flex-1 overflow-y-auto pr-2 space-y-4 scrollbar-thin max-h-[500px]">
                   {result.transcript.length > 0 ? (
@@ -1000,12 +1104,12 @@ ${renderAsList(summary.expected_effects)}
               </div>
             </div>
 
-            {/* Summary */}
-            <div className="w-[60%] flex flex-col gap-6">
+            {/* 분석 요약 */}
+            <div className="w-full lg:w-[60%] flex flex-col gap-6">
               <div className="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-xl shadow-2xl relative overflow-hidden flex-1 h-[800px] overflow-y-auto scrollbar-thin">
                 <h3 className="text-3xl font-extrabold mb-8 flex items-center gap-3">
                   <div className="bg-gradient-to-br from-fuchsia-500 to-purple-600 p-2 text-white rounded-xl"><ChevronRight className="w-6 h-6" /></div>
-                  Executive Summary
+                  분석 요약
                 </h3>
                 <div className="space-y-8 relative z-10">
                   <div className="group">
@@ -1013,13 +1117,7 @@ ${renderAsList(summary.expected_effects)}
                       <span className="w-2 h-2 rounded-full bg-fuchsia-400"></span> 1. 현황 및 문제점
                     </h4>
                     <div className="p-5 bg-white/5 rounded-2xl border border-white/10 space-y-4">
-                      {result.summary.asis.split("\n\n").filter(p => p.trim()).map((p, pIdx) => (
-                        <ul key={pIdx} className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
-                          {p.split("\n").filter(line => line.trim()).map((line, i) => (
-                            <li key={i}>{line.trim()}</li>
-                          ))}
-                        </ul>
-                      ))}
+                      {renderSummaryContent(result.summary.asis, "현황 및 문제점 요약이 없습니다.")}
                     </div>
                   </div>
                   <div className="group">
@@ -1027,13 +1125,7 @@ ${renderAsList(summary.expected_effects)}
                       <span className="w-2 h-2 rounded-full bg-cyan-400"></span> 2. 개선방향 (목적)
                     </h4>
                     <div className="p-5 bg-white/5 rounded-2xl border border-white/10 space-y-4">
-                      {result.summary.tobe.split("\n\n").filter(p => p.trim()).map((p, pIdx) => (
-                        <ul key={pIdx} className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
-                          {p.split("\n").filter(line => line.trim()).map((line, i) => (
-                            <li key={i}>{line.trim()}</li>
-                          ))}
-                        </ul>
-                      ))}
+                      {renderSummaryContent(result.summary.tobe, "개선방향 요약이 없습니다.")}
                     </div>
                   </div>
                   <div className="group">
@@ -1041,37 +1133,37 @@ ${renderAsList(summary.expected_effects)}
                       <span className="w-2 h-2 rounded-full bg-green-400"></span> 3. 기대효과
                     </h4>
                     <div className="p-5 bg-white/5 rounded-2xl border border-white/10 space-y-4">
-                      {result.summary.expected_effects.split("\n\n").filter(p => p.trim()).map((p, pIdx) => (
-                        <ul key={pIdx} className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
-                          {p.split("\n").filter(line => line.trim()).map((line, i) => (
-                            <li key={i}>{line.trim()}</li>
-                          ))}
-                        </ul>
-                      ))}
+                      {renderSummaryContent(result.summary.expected_effects, "기대효과 요약이 없습니다.")}
                     </div>
                   </div>
                   <div className="mt-12 pt-8 border-t border-white/10">
                     <div className="flex items-center justify-between mb-6">
                       <h4 className="text-xl font-bold text-white">4. 일감내용 및 일정</h4>
-                      <button onClick={handleAddSchedule} className="text-sm px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-white font-medium transition-colors">+ Add Row</button>
+                      <button onClick={handleAddSchedule} className="text-sm px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-white font-medium transition-colors">+ 행 추가</button>
                     </div>
                     <div className="overflow-hidden rounded-xl border border-white/10">
                       <table className="w-full text-left border-collapse">
                         <thead>
                           <tr className="bg-white/5">
-                            <th className="p-4 font-semibold text-white/60 border-b border-white/10 w-1/2">Task</th>
-                            <th className="p-4 font-semibold text-white/60 border-b border-white/10 w-1/4">Assignee</th>
-                            <th className="p-4 font-semibold text-white/60 border-b border-white/10 w-1/4">Due Date</th>
+                            <th className="p-4 font-semibold text-white/60 border-b border-white/10 w-1/2">일감</th>
+                            <th className="p-4 font-semibold text-white/60 border-b border-white/10 w-1/4">담당자</th>
+                            <th className="p-4 font-semibold text-white/60 border-b border-white/10 w-1/4">기한</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {result.summary.schedule.map((item, idx) => (
-                            <tr key={idx} className="bg-white/[0.02] border-b border-white/5 last:border-0 hover:bg-white/5 transition-colors">
-                              <td className="p-0 border-r border-white/5"><input type="text" value={item.task} onChange={(e) => updateSchedule(idx, "task", e.target.value)} className="w-full bg-transparent p-4 outline-none text-white focus:bg-white/10" /></td>
-                              <td className="p-0 border-r border-white/5"><input type="text" value={item.assignee} onChange={(e) => updateSchedule(idx, "assignee", e.target.value)} className="w-full bg-transparent p-4 outline-none text-cyan-200 focus:bg-white/10" /></td>
-                              <td className="p-0"><input type="text" value={item.dueDate} onChange={(e) => updateSchedule(idx, "dueDate", e.target.value)} className="w-full bg-transparent p-4 outline-none text-fuchsia-200 focus:bg-white/10" /></td>
+                          {result.summary.schedule.length > 0 ? (
+                            result.summary.schedule.map((item, idx) => (
+                              <tr key={idx} className="bg-white/[0.02] border-b border-white/5 last:border-0 hover:bg-white/5 transition-colors">
+                                <td className="p-0 border-r border-white/5"><input type="text" value={item.task} onChange={(e) => updateSchedule(idx, "task", e.target.value)} className="w-full bg-transparent p-4 outline-none text-white focus:bg-white/10" /></td>
+                                <td className="p-0 border-r border-white/5"><input type="text" value={item.assignee} onChange={(e) => updateSchedule(idx, "assignee", e.target.value)} className="w-full bg-transparent p-4 outline-none text-cyan-200 focus:bg-white/10" /></td>
+                                <td className="p-0"><input type="text" value={item.dueDate} onChange={(e) => updateSchedule(idx, "dueDate", e.target.value)} className="w-full bg-transparent p-4 outline-none text-fuchsia-200 focus:bg-white/10" /></td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr className="bg-white/[0.02]">
+                              <td colSpan={3} className="p-5 text-center text-white/40 text-sm">등록된 일감 일정이 없습니다.</td>
                             </tr>
-                          ))}
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -1084,121 +1176,14 @@ ${renderAsList(summary.expected_effects)}
       )}
 
 
-      {/* Task Template Modal */}
-      {showTaskTemplate && result && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="bg-slate-900 border border-white/10 w-full max-w-4xl max-h-[90vh] rounded-[2rem] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-300">
-            {/* Modal Header */}
-            <div className="p-8 border-b border-white/10 flex items-center justify-between bg-gradient-to-r from-orange-500/10 to-amber-500/10">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-orange-500 rounded-2xl text-white">
-                  <CheckSquare className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="text-2xl font-bold text-white">일감 진행 초안 생성</h3>
-                  <p className="text-orange-200/60 text-sm">회의 내용을 기반으로 단위/중점 업무 양식을 구성했습니다.</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setShowTaskTemplate(false)}
-                className="p-2 hover:bg-white/10 rounded-full text-white/40 hover:text-white transition-all"
-              >
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            {/* Modal Content */}
-            <div className="flex-1 overflow-y-auto p-8 space-y-10 scrollbar-thin max-h-[calc(90vh-200px)]">
-              {/* 단위업무 Section */}
-              <section className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-1.5 h-6 bg-amber-500 rounded-full" />
-                  <h4 className="text-xl font-bold text-white">단위 업무 (Unit Tasks)</h4>
-                </div>
-                <div className="space-y-3">
-                  {result.summary.schedule.map((task, idx) => (
-                    <div key={idx} className="flex items-center gap-4 bg-white/5 border border-white/10 p-4 rounded-2xl group hover:bg-white/[0.08] transition-all">
-                      <div className="w-8 h-8 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-sm shrink-0">
-                        {idx + 1}
-                      </div>
-                      <div className="flex-1 grid grid-cols-12 gap-4">
-                        <div className="col-span-7">
-                          <label className="text-[10px] font-bold text-white/30 uppercase block mb-1">Task Name</label>
-                          <input 
-                            type="text" 
-                            defaultValue={task.task}
-                            className="bg-transparent text-white font-medium outline-none w-full"
-                          />
-                        </div>
-                        <div className="col-span-3">
-                          <label className="text-[10px] font-bold text-white/30 uppercase block mb-1">Assignee</label>
-                          <input 
-                            type="text" 
-                            defaultValue={task.assignee}
-                            className="bg-transparent text-amber-200 outline-none w-full"
-                          />
-                        </div>
-                        <div className="col-span-2 text-right">
-                          <label className="text-[10px] font-bold text-white/30 uppercase block mb-1">Due Date</label>
-                          <input 
-                            type="text" 
-                            defaultValue={task.dueDate}
-                            className="bg-transparent text-white/60 text-sm outline-none w-full text-right"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  <button className="w-full py-4 border-2 border-dashed border-white/10 rounded-2xl text-white/40 font-medium hover:bg-white/5 hover:border-white/20 transition-all">
-                    + 업무 추가하기
-                  </button>
-                </div>
-              </section>
-
-              {/* 중점업무 Section */}
-              <section className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-1.5 h-6 bg-orange-500 rounded-full" />
-                  <h4 className="text-xl font-bold text-white">중점 업무 (Key Tasks)</h4>
-                </div>
-                <div className="grid grid-cols-1 gap-4">
-                  <div className="bg-white/5 border border-white/10 rounded-2xl p-6 hover:border-orange-500/30 transition-colors">
-                    <label className="text-[10px] uppercase font-bold text-orange-400 mb-2 block tracking-widest">Strategic Goal</label>
-                    <textarea 
-                      className="w-full bg-transparent text-white text-lg font-medium leading-relaxed outline-none resize-none min-h-[100px]"
-                      defaultValue={result.summary.tobe}
-                    />
-                  </div>
-                  <div className="bg-white/5 border border-white/10 rounded-2xl p-6 hover:border-orange-500/30 transition-colors">
-                    <label className="text-[10px] uppercase font-bold text-orange-400 mb-2 block tracking-widest">Expected Outcome</label>
-                    <textarea 
-                      className="w-full bg-transparent text-white/80 leading-relaxed outline-none resize-none min-h-[80px]"
-                      defaultValue={result.summary.expected_effects}
-                    />
-                  </div>
-                </div>
-              </section>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-8 border-t border-white/10 bg-white/[0.02] flex items-center justify-end gap-4">
-              <button 
-                onClick={() => setShowTaskTemplate(false)}
-                className="px-6 py-3 rounded-xl text-white font-semibold hover:bg-white/10 transition-all"
-              >
-                취소
-              </button>
-              <button 
-                onClick={handleSendToConfluence}
-                disabled={isSendingToConfluence}
-                className="px-8 py-3 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white rounded-xl font-bold shadow-lg transform hover:-translate-y-0.5 transition-all disabled:opacity-50"
-              >
-                {isSendingToConfluence ? <Loader2 className="w-5 h-5 animate-spin" /> : "WIKI 전송"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <WorkProgressModal
+        isOpen={showTaskTemplate && Boolean(result)}
+        onClose={() => setShowTaskTemplate(false)}
+        meetingTitle={meetingTitle}
+        meetingDate={meetingDate}
+        participants={participants}
+        summary={result?.summary || { asis: "", tobe: "", expected_effects: "", schedule: [] }}
+      />
       <Modal
         isOpen={modalConfig.isOpen}
         onClose={closeModal}

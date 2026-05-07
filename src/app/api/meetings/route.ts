@@ -3,10 +3,47 @@ import prisma from '@/lib/prisma';
 
 export const runtime = 'nodejs';
 
+type MeetingParticipantInput = {
+  team: string;
+  name: string;
+};
+
+type MeetingTranscriptInput = {
+  speaker: string;
+  text: string;
+};
+
+type MeetingScheduleInput = {
+  task: string;
+  assignee: string;
+  dueDate: string;
+};
+
+type MeetingSourceType = "upload" | "realtime";
+
+type CreateMeetingBody = {
+  title?: string;
+  sourceType?: string;
+  audioUrl?: string;
+  meetingDate?: string;
+  participants?: MeetingParticipantInput[];
+  transcript?: MeetingTranscriptInput[];
+  summary?: {
+    asis?: string;
+    tobe?: string;
+    expected_effects?: string;
+    schedule?: MeetingScheduleInput[];
+  };
+};
+
+const normalizeSourceType = (value?: string): MeetingSourceType => (
+  value === "realtime" ? "realtime" : "upload"
+);
+
 export async function GET(): Promise<NextResponse> {
   try {
     const meetings = await prisma.meeting.findMany({
-      orderBy: { meetingDate: 'desc' },
+      orderBy: { createdAt: 'desc' },
       include: {
         participants: true,
         transcript: true,
@@ -25,19 +62,15 @@ export async function GET(): Promise<NextResponse> {
     }));
 
     return NextResponse.json(formatted);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('GET /api/meetings error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "회의록 목록을 불러오지 못했습니다." }, { status: 500 });
   }
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    const body = await req.json();
-    
-    if (!body.title || !body.audioUrl || !body.summary || !body.transcript) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-    }
+    const body = await req.json() as CreateMeetingBody;
 
     // Validate meetingDate
     let mDate = new Date();
@@ -50,32 +83,33 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     const meeting = await prisma.meeting.create({
       data: {
-        title: body.title,
-        audioUrl: body.audioUrl,
-        asis: body.summary.asis || "",
-        tobe: body.summary.tobe || "",
-        expected_effects: body.summary.expected_effects || "",
+        title: body.title?.trim() || "제목 없는 회의록",
+        sourceType: normalizeSourceType(body.sourceType),
+        audioUrl: body.audioUrl || "",
+        asis: body.summary?.asis || "",
+        tobe: body.summary?.tobe || "",
+        expected_effects: body.summary?.expected_effects || "",
         meetingDate: mDate,
         participants: {
-          create: body.participants?.map((p: any) => ({
-            team: p.team,
-            name: p.name
+          create: body.participants?.map((p) => ({
+            team: p.team || "미지정",
+            name: p.name || "이름 없음"
           })) || []
         },
         transcript: {
-          create: body.transcript?.map((t: any) => ({
-            speaker: t.speaker,
-            text: t.text
+          create: body.transcript?.map((t) => ({
+            speaker: t.speaker || "알 수 없음",
+            text: t.text || ""
           })) || []
         },
         schedule: {
-          create: body.summary.schedule?.map((s: any) => ({
-            task: s.task,
-            assignee: s.assignee,
-            dueDate: s.dueDate
+          create: body.summary?.schedule?.map((s) => ({
+            task: s.task || "",
+            assignee: s.assignee || "",
+            dueDate: s.dueDate || ""
           })) || []
         }
-      } as any,
+      },
       include: {
         participants: true,
         transcript: true,
@@ -84,8 +118,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
 
     return NextResponse.json({ success: true, meeting });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('POST /api/meetings error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "회의록 저장 중 오류가 발생했습니다." }, { status: 500 });
   }
 }
