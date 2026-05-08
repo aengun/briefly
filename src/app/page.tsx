@@ -1,13 +1,25 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { UploadCloud, FileAudio, Loader2, CheckCircle2, ChevronRight, Save, Mic, MicOff, Square, Play, LayoutGrid } from "lucide-react";
+import { UploadCloud, FileAudio, Loader2, CheckCircle2, Save, Mic, MicOff, Square, Play, LayoutGrid, Share2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Modal from "../components/Modal";
+import MeetingConfluenceModal from "../components/MeetingConfluenceModal";
 import TranscriptPlayer, { type TranscriptJumpTarget } from "../components/TranscriptPlayer";
 import VisualizationPopup from "../components/VisualizationPopup";
 import WorkProgressModal from "../components/WorkProgressModal";
 import { validateAnalyzableContent } from "@/lib/analysis-guard";
+import {
+  buildMeetingTitle,
+  extractMeetingTopic,
+  formatMeetingDateDots,
+  formatMeetingSummaryByStructure,
+  getMeetingSummaryTextareaRows,
+  formatParticipantSummary,
+  inferMeetingSummaryStructure,
+  meetingSummaryStructures,
+  type MeetingSummaryStructure,
+} from "@/lib/meeting-summary";
 
 // Define the interfaces based on our DB types
 type ScheduleItem = {
@@ -32,6 +44,10 @@ type SummaryResult = {
   audioUrl: string;
   transcript: TranscriptUtterance[];
   summary: {
+    topic?: string;
+    title?: string;
+    mainTopic?: string;
+    keyDiscussion?: string;
     asis: string;
     tobe: string;
     expected_effects: string;
@@ -178,6 +194,10 @@ const normalizeSummaryResult = (value: Partial<SummaryResult>): SummaryResult =>
     }))
     : [],
   summary: {
+    topic: value.summary?.topic || "",
+    title: value.summary?.title || "",
+    mainTopic: value.summary?.mainTopic || "",
+    keyDiscussion: value.summary?.keyDiscussion || "",
     asis: value.summary?.asis || "",
     tobe: value.summary?.tobe || "",
     expected_effects: value.summary?.expected_effects || "",
@@ -191,10 +211,22 @@ const normalizeSummaryResult = (value: Partial<SummaryResult>): SummaryResult =>
   }
 });
 
-const getDefaultTitle = (targetFile: File, sourceType: SourceType) => {
-  const baseName = targetFile.name.replace(/\.[^/.]+$/, "").trim();
-  if (baseName) return baseName;
-  return sourceType === "realtime" ? `실시간 녹화 ${new Date().toLocaleString("ko-KR")}` : "제목 없는 회의록";
+const recordingMimeCandidates = [
+  "audio/mp4",
+  "audio/aac",
+  "audio/webm;codecs=opus",
+  "audio/webm",
+];
+
+const getSupportedRecordingMimeType = () => {
+  if (typeof MediaRecorder === "undefined") return "";
+  return recordingMimeCandidates.find((type) => MediaRecorder.isTypeSupported(type)) || "";
+};
+
+const getRecordingExtension = (mimeType: string) => {
+  if (/mp4|aac|m4a/i.test(mimeType)) return "m4a";
+  if (/wav/i.test(mimeType)) return "wav";
+  return "webm";
 };
 
 export default function Home() {
@@ -247,6 +279,7 @@ export default function Home() {
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [recordingTime, setRecordingTime] = useState(0);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
   const [audioLevels, setAudioLevels] = useState<number[]>(Array(12).fill(0));
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobEvent["data"][]>([]);
@@ -258,6 +291,9 @@ export default function Home() {
   const [showTaskTemplate, setShowTaskTemplate] = useState(false);
   const [transcriptJumpTarget, setTranscriptJumpTarget] = useState<TranscriptJumpTarget | null>(null);
   const [showVisualizationPopup, setShowVisualizationPopup] = useState(false);
+  const [showMeetingConfluenceModal, setShowMeetingConfluenceModal] = useState(false);
+  const [summaryStructure, setSummaryStructure] = useState<MeetingSummaryStructure>("안건중심");
+  const [meetingOverviewText, setMeetingOverviewText] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Prevent Hydration mismatch by setting initial date on client only
@@ -269,9 +305,15 @@ export default function Home() {
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
     };
-  }, [audioUrl]);
+  }, []);
+
+  const replaceAudioUrl = (nextUrl: string | null) => {
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+    audioUrlRef.current = nextUrl;
+    setAudioUrl(nextUrl);
+  };
 
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60).toString().padStart(2, "0");
@@ -309,7 +351,10 @@ export default function Home() {
       };
       updateLevels();
 
-      const mediaRecorder = new MediaRecorder(stream);
+      const recordingMimeType = getSupportedRecordingMimeType();
+      const mediaRecorder = recordingMimeType
+        ? new MediaRecorder(stream, { mimeType: recordingMimeType })
+        : new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
 
@@ -322,12 +367,13 @@ export default function Home() {
         if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
         setAudioLevels(Array(12).fill(0));
 
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        const blobType = mediaRecorder.mimeType || recordingMimeType || "audio/webm";
+        const blob = new Blob(chunksRef.current, { type: blobType });
         setRecordedBlob(blob);
         const url = URL.createObjectURL(blob);
-        setAudioUrl(url);
+        replaceAudioUrl(url);
         // ref에 즉시 저장 (state 업데이트 지연 방지)
-        const recordedFile = new File([blob], `recording_${Date.now()}.webm`, { type: "audio/webm" });
+        const recordedFile = new File([blob], `recording_${Date.now()}.${getRecordingExtension(blobType)}`, { type: blobType });
         recordedFileRef.current = recordedFile;
         setFile(recordedFile);
         setResult(null);
@@ -343,7 +389,7 @@ export default function Home() {
       setIsRecording(true);
       setRecordingTime(0);
       setRecordedBlob(null);
-      setAudioUrl(null);
+      replaceAudioUrl(null);
       recordedFileRef.current = null;
       timerRef.current = setInterval(() => {
         setRecordingTime(prev => prev + 1);
@@ -364,7 +410,7 @@ export default function Home() {
 
   const resetRecording = () => {
     setRecordedBlob(null);
-    setAudioUrl(null);
+    replaceAudioUrl(null);
     setFile(null);
     setRecordingTime(0);
     setError(null);
@@ -375,7 +421,11 @@ export default function Home() {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
+      const selectedFile = e.target.files[0];
+      setFile(selectedFile);
+      setRecordedBlob(null);
+      recordedFileRef.current = null;
+      replaceAudioUrl(URL.createObjectURL(selectedFile));
       setResult(null);
       setError(null);
       setSavedMeetingId(null);
@@ -387,7 +437,11 @@ export default function Home() {
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setFile(e.dataTransfer.files[0]);
+      const droppedFile = e.dataTransfer.files[0];
+      setFile(droppedFile);
+      setRecordedBlob(null);
+      recordedFileRef.current = null;
+      replaceAudioUrl(URL.createObjectURL(droppedFile));
       setResult(null);
       setError(null);
       setSavedMeetingId(null);
@@ -518,9 +572,20 @@ export default function Home() {
       if (!validation.isAnalyzable) {
         throw new Error(validation.message);
       }
-      const defaultTitle = getDefaultTitle(targetFile, sourceType);
+      const inferredStructure = inferMeetingSummaryStructure(normalizedResult.summary, normalizedResult.transcript);
+      const generatedTitle = buildMeetingTitle({
+        meetingDate: meetingDate || new Date(),
+        summary: normalizedResult.summary,
+        transcript: normalizedResult.transcript,
+      });
+      setSummaryStructure(inferredStructure);
+      setMeetingOverviewText(formatMeetingSummaryByStructure({
+        structure: inferredStructure,
+        summary: normalizedResult.summary,
+        transcript: normalizedResult.transcript,
+      }));
       setResult(normalizedResult);
-      setMeetingTitle(defaultTitle);
+      setMeetingTitle(generatedTitle);
 
       if (data.usedModel) {
         console.log(`Used AI Model: ${data.usedModel}`);
@@ -543,7 +608,7 @@ export default function Home() {
         setAnalysisStage("회의록 저장 중");
         const savedMeeting = await persistMeetingToArchive({
           meetingResult: normalizedResult,
-          title: defaultTitle,
+          title: generatedTitle,
           sourceType,
           participantsForSave: participants,
           existingMeetingId: null
@@ -648,34 +713,14 @@ export default function Home() {
     }
   };
 
-  const handleAddSchedule = () => {
-    if (result) {
-      const newSchedule = [...result.summary.schedule, { task: "", assignee: "", dueDate: "" }];
-      setResult({ ...result, summary: { ...result.summary, schedule: newSchedule } });
-    }
-  };
-
-  const updateSchedule = (index: number, field: keyof ScheduleItem, value: string) => {
-    if (result) {
-      const newSchedule = [...result.summary.schedule];
-      newSchedule[index] = { ...newSchedule[index], [field]: value };
-      setResult({ ...result, summary: { ...result.summary, schedule: newSchedule } });
-    }
-  };
-
-  const renderSummaryContent = (text: string, emptyMessage: string) => {
-    const paragraphs = text.split("\n\n").filter(p => p.trim());
-    if (paragraphs.length === 0) {
-      return <p className="text-white/40 text-sm">{emptyMessage}</p>;
-    }
-
-    return paragraphs.map((p, pIdx) => (
-      <ul key={pIdx} className="list-disc list-inside space-y-2 text-white/90 leading-relaxed">
-        {p.split("\n").filter(line => line.trim()).map((line, i) => (
-          <li key={i}>{line.trim()}</li>
-        ))}
-      </ul>
-    ));
+  const changeSummaryStructure = (structure: MeetingSummaryStructure) => {
+    setSummaryStructure(structure);
+    if (!result) return;
+    setMeetingOverviewText(formatMeetingSummaryByStructure({
+      structure,
+      summary: result.summary,
+      transcript: result.transcript,
+    }));
   };
 
   const handleSaveToArchive = async () => {
@@ -711,6 +756,11 @@ export default function Home() {
       setIsSaving(false);
     }
   };
+
+  const currentMeetingTopic = result ? extractMeetingTopic(result.summary, result.transcript) : "제목 없는 회의록";
+  const currentMeetingDateText = formatMeetingDateDots(meetingDate || new Date());
+  const currentParticipantText = result ? formatParticipantSummary(participants, result.transcript) : "참석자 미확인";
+
   return (
     <>
     <main className="max-w-6xl mx-auto px-4 py-8 flex flex-col gap-12">
@@ -930,38 +980,50 @@ export default function Home() {
       {/* 4. Result Section */}
       {result && (
         <section className="w-full flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
-          <div className="flex flex-col gap-4 bg-white/5 border border-white/10 p-4 pb-5 rounded-2xl backdrop-blur-xl xl:flex-row xl:items-end">
-            <div className="flex flex-col gap-1 flex-1">
+          <div className="flex flex-col gap-4 bg-white/5 border border-white/10 p-4 pb-5 rounded-2xl backdrop-blur-xl">
+            <div className="flex flex-col gap-1">
               <label className="text-[10px] tracking-widest text-white/40 font-bold ml-2">회의록 제목</label>
-              <input
-                type="text"
+              <textarea
                 value={meetingTitle}
                 onChange={e => setMeetingTitle(e.target.value)}
-                className="bg-transparent text-2xl font-bold text-white outline-none focus:border-b focus:border-white/20 px-2 py-1 w-full"
+                rows={2}
+                className="min-h-[74px] w-full resize-y rounded-xl border border-transparent bg-black/10 px-3 py-2 text-2xl font-bold leading-snug text-white outline-none transition focus:border-white/20"
                 placeholder="회의 제목을 입력하세요"
               />
             </div>
-            <div className="hidden w-px h-10 bg-white/10 mx-2 mb-1 xl:block" />
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] tracking-widest text-white/40 font-bold ml-2">회의일</label>
-              <input
-                type="date"
-                value={meetingDate}
-                onChange={e => setMeetingDate(e.target.value)}
-                className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white outline-none focus:border-cyan-400 transition-all text-sm h-[42px]"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] tracking-widest text-white/40 font-bold ml-2">분석 출처</label>
-              <span className={`inline-flex h-[42px] items-center rounded-xl border px-4 text-sm font-bold ${
-                resultSourceType === "realtime"
-                  ? "border-rose-400/30 bg-rose-500/15 text-rose-200"
-                  : "border-cyan-400/30 bg-cyan-500/15 text-cyan-200"
-              }`}>
-                {resultSourceType === "realtime" ? "실시간 녹화" : "업로드 파일"}
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-3 mb-0.5 xl:ml-auto">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] tracking-widest text-white/40 font-bold ml-2">회의일</label>
+                  <input
+                    type="date"
+                    value={meetingDate}
+                    onChange={e => {
+                      const nextDate = e.target.value;
+                      setMeetingDate(nextDate);
+                      if (result) {
+                        setMeetingTitle(buildMeetingTitle({
+                          meetingDate: nextDate,
+                          summary: result.summary,
+                          transcript: result.transcript,
+                        }));
+                      }
+                    }}
+                    className="bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white outline-none focus:border-cyan-400 transition-all text-sm h-[42px]"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] tracking-widest text-white/40 font-bold ml-2">분석 출처</label>
+                  <span className={`inline-flex h-[42px] items-center rounded-xl border px-4 text-sm font-bold ${
+                    resultSourceType === "realtime"
+                      ? "border-rose-400/30 bg-rose-500/15 text-rose-200"
+                      : "border-cyan-400/30 bg-cyan-500/15 text-cyan-200"
+                  }`}>
+                    {resultSourceType === "realtime" ? "실시간 녹화" : "업로드 파일"}
+                  </span>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 mb-0.5">
               <button
                 onClick={() => setShowTaskTemplate(true)}
                 disabled={!validateAnalyzableContent(result.transcript).isAnalyzable}
@@ -980,6 +1042,15 @@ export default function Home() {
                 회의내용 도식화
               </button>
               <button
+                onClick={() => setShowMeetingConfluenceModal(true)}
+                disabled={!validateAnalyzableContent(result.transcript).isAnalyzable}
+                className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
+                title={!validateAnalyzableContent(result.transcript).isAnalyzable ? "분석 가능한 회의 내용이 부족해 회의록을 등록할 수 없습니다." : undefined}
+              >
+                <Share2 className="w-5 h-5" />
+                회의록 등록
+              </button>
+              <button
                 onClick={handleSaveToArchive}
                 disabled={isSaving}
                 className="flex items-center gap-2 bg-gradient-to-r from-fuchsia-600 to-cyan-600 hover:from-fuchsia-500 hover:to-cyan-500 text-white px-6 py-2.5 rounded-xl font-semibold transition-all shadow-lg"
@@ -987,6 +1058,7 @@ export default function Home() {
                 {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
                 {savedMeetingId ? "보관소 업데이트" : "보관소에 저장"}
               </button>
+              </div>
             </div>
           </div>
           {(archiveStatusMessage || archiveErrorMessage) && (
@@ -1000,69 +1072,44 @@ export default function Home() {
           )}
 
           <div className="w-full flex flex-col gap-8">
-            {/* 분석 요약 (상단 중앙 배치) */}
             <div className="w-full flex flex-col gap-6">
-              <div className="bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-xl shadow-2xl relative overflow-hidden">
-                <h3 className="text-3xl font-extrabold mb-8 flex items-center gap-3">
-                  <div className="bg-gradient-to-br from-fuchsia-500 to-purple-600 p-2 text-white rounded-xl"><ChevronRight className="w-6 h-6" /></div>
-                  분석 요약
-                </h3>
-                <div className="space-y-8 relative z-10">
-                  <div className="group">
-                    <h4 className="text-sm font-bold text-fuchsia-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-fuchsia-400"></span> 1. 현황 및 문제점
-                    </h4>
-                    <div className="p-5 bg-white/5 rounded-2xl border border-white/10 space-y-4">
-                      {renderSummaryContent(result.summary.asis, "현황 및 문제점 요약이 없습니다.")}
+              <div className="bg-white/5 border border-white/10 rounded-3xl p-6 backdrop-blur-xl shadow-2xl relative overflow-hidden sm:p-8">
+                <div className="flex flex-col gap-6">
+                  <div className="space-y-3">
+                    <p className="text-sm font-semibold text-white/55">
+                      {currentMeetingDateText} {currentParticipantText}
+                    </p>
+                    <div>
+                      <p className="mb-2 text-sm font-bold tracking-widest text-cyan-300">회의주제</p>
+                      <h3 className="max-w-5xl text-2xl font-extrabold leading-snug text-white">
+                        {currentMeetingTopic}
+                      </h3>
                     </div>
                   </div>
-                  <div className="group">
-                    <h4 className="text-sm font-bold text-cyan-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-cyan-400"></span> 2. 개선방향 (목적)
-                    </h4>
-                    <div className="p-5 bg-white/5 rounded-2xl border border-white/10 space-y-4">
-                      {renderSummaryContent(result.summary.tobe, "개선방향 요약이 없습니다.")}
+
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+                    <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <label htmlFor="meeting-summary-text" className="text-sm font-bold tracking-widest text-white/70">
+                        회의 내용 요약
+                      </label>
+                      <select
+                        value={summaryStructure}
+                        onChange={event => changeSummaryStructure(event.target.value as MeetingSummaryStructure)}
+                        className="h-9 rounded-lg border border-white/10 bg-slate-900 px-3 text-sm font-semibold text-white outline-none transition focus:border-cyan-300"
+                      >
+                        {meetingSummaryStructures.map(option => (
+                          <option key={option} value={option} className="text-gray-900">{option}</option>
+                        ))}
+                      </select>
                     </div>
-                  </div>
-                  <div className="group">
-                    <h4 className="text-sm font-bold text-green-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-green-400"></span> 3. 기대효과
-                    </h4>
-                    <div className="p-5 bg-white/5 rounded-2xl border border-white/10 space-y-4">
-                      {renderSummaryContent(result.summary.expected_effects, "기대효과 요약이 없습니다.")}
-                    </div>
-                  </div>
-                  <div className="mt-12 pt-8 border-t border-white/10">
-                    <div className="flex items-center justify-between mb-6">
-                      <h4 className="text-xl font-bold text-white">4. 일감내용 및 일정</h4>
-                      <button onClick={handleAddSchedule} className="text-sm px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-white font-medium transition-colors">+ 행 추가</button>
-                    </div>
-                    <div className="overflow-hidden rounded-xl border border-white/10">
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="bg-white/5">
-                            <th className="p-4 font-semibold text-white/60 border-b border-white/10 w-1/2">일감</th>
-                            <th className="p-4 font-semibold text-white/60 border-b border-white/10 w-1/4">담당자</th>
-                            <th className="p-4 font-semibold text-white/60 border-b border-white/10 w-1/4">기한</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {result.summary.schedule.length > 0 ? (
-                            result.summary.schedule.map((item, idx) => (
-                              <tr key={idx} className="bg-white/[0.02] border-b border-white/5 last:border-0 hover:bg-white/5 transition-colors">
-                                <td className="p-0 border-r border-white/5"><input type="text" value={item.task} onChange={(e) => updateSchedule(idx, "task", e.target.value)} className="w-full bg-transparent p-4 outline-none text-white focus:bg-white/10" /></td>
-                                <td className="p-0 border-r border-white/5"><input type="text" value={item.assignee} onChange={(e) => updateSchedule(idx, "assignee", e.target.value)} className="w-full bg-transparent p-4 outline-none text-cyan-200 focus:bg-white/10" /></td>
-                                <td className="p-0"><input type="text" value={item.dueDate} onChange={(e) => updateSchedule(idx, "dueDate", e.target.value)} className="w-full bg-transparent p-4 outline-none text-fuchsia-200 focus:bg-white/10" /></td>
-                              </tr>
-                            ))
-                          ) : (
-                            <tr className="bg-white/[0.02]">
-                              <td colSpan={3} className="p-5 text-center text-white/40 text-sm">등록된 일감 일정이 없습니다.</td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
+                    <textarea
+                      id="meeting-summary-text"
+                      value={meetingOverviewText}
+                      onChange={event => setMeetingOverviewText(event.target.value)}
+                      rows={getMeetingSummaryTextareaRows(meetingOverviewText)}
+                      className="min-h-[520px] w-full resize-y overflow-y-auto rounded-xl border border-white/10 bg-black/20 p-5 text-[15px] leading-8 text-white outline-none transition placeholder:text-white/30 focus:border-cyan-300/60"
+                      placeholder="분석 가능한 회의 내용이 부족합니다."
+                    />
                   </div>
                 </div>
               </div>
@@ -1071,7 +1118,7 @@ export default function Home() {
             {/* 회의록 전문 (하단 배치) */}
             <div className="w-full flex flex-col gap-6">
               <TranscriptPlayer
-                audioUrl={audioUrl}
+                audioUrl={audioUrl || result.audioUrl}
                 transcript={result.transcript}
                 title="대화 원문"
                 emptyMessage="대화 원문을 불러올 수 없습니다."
@@ -1090,10 +1137,10 @@ export default function Home() {
           setShowTaskTemplate(false);
           showModal({
             title: "전송 완료",
-            message: "단위업무 생성 및 주요진행업무 업데이트가 완료되었습니다.",
+            message: "WIKI 전송이 완료되었습니다. 등록된 단위업무 페이지를 보시겠습니까?",
             type: "confirm",
-            confirmText: "단위업무 확인",
-            cancelText: "닫기",
+            confirmText: "예",
+            cancelText: "아니오",
             onConfirm: () => {
               closeModal();
               if (data.unitPage?.url) window.open(data.unitPage.url, "_blank");
@@ -1114,6 +1161,28 @@ export default function Home() {
           index,
           nonce: (previous?.nonce || 0) + 1,
         }))}
+      />
+      <MeetingConfluenceModal
+        isOpen={showMeetingConfluenceModal && Boolean(result)}
+        onClose={() => setShowMeetingConfluenceModal(false)}
+        meetingDate={meetingDate}
+        participants={participants}
+        transcript={result?.transcript || []}
+        summary={result?.summary || { asis: "", tobe: "", expected_effects: "", schedule: [] }}
+        overviewText={meetingOverviewText}
+        onSuccess={(page) => {
+          showModal({
+            title: "등록 완료",
+            message: "회의록이 Confluence에 등록되었습니다.",
+            type: "confirm",
+            confirmText: "페이지 확인",
+            cancelText: "닫기",
+            onConfirm: () => {
+              closeModal();
+              if (page.url) window.open(page.url, "_blank");
+            }
+          });
+        }}
       />
       <Modal
         isOpen={modalConfig.isOpen}

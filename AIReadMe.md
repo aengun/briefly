@@ -138,6 +138,24 @@
 - 관련 함수/API: `POST /api/summarize`, `modelsToTry`, `transcribeWithOpenAI`, `classifyUnknownError`
 - 수정 내용: Gemini 실패 시 OpenAI로 fallback 하는 경로를 추가했다. OpenAI 전사 `gpt-4o-mini-transcribe`와 요약 `gpt-5.1`을 사용하도록 코드 경로를 넣었다. 다만 현재 `.env.local`에 `OPENAI_API_KEY`는 없어서 fallback은 비활성 상태다.
 - 남은 위험 요소: OpenAI 키가 없으면 fallback이 동작하지 않는다. 시연 전 실제로 GPT 경로를 쓰려면 `OPENAI_API_KEY`를 추가해야 한다.
+- 날짜: 2026-05-08
+- 발생 화면: 파일 업로드 분석 / 직접 녹음 분석
+- 사용자에게 표시된 오류: `대화 내용 변환 중 오류가 발생했습니다. 회의록 분석 결과 형식이 맞지 않았습니다. 잠시 후 다시 시도해주세요.`
+- 실제 원인 또는 의심 원인: OpenAI 전사 호출이 `429 insufficient_quota`로 실패했고, Gemini fallback 중 `gemini-2.5-pro`와 `gemini-2.5-flash`도 quota 초과였다. 마지막 `gemini-2.5-flash-lite`는 긴 transcript JSON을 중간에서 잘라 보내 `PARSE_FAILED: transcript`가 발생했다.
+- 관련 파일: `src/app/api/summarize/route.ts`
+- 관련 함수/API: `POST /api/summarize`, `transcribeWithOpenAI`, `parseStructuredResponse`, `parseLooseTranscriptResponse`, `modelsToTry`
+- 수정 내용: quota 0인 `gemini-2.5-pro`를 fallback 목록에서 제거하고, Gemini가 불완전한 transcript JSON을 반환해도 완성된 `{ text: ... }` 발화 객체를 복구하는 `parseLooseTranscriptResponse`를 추가했다.
+- 남은 위험 요소: OpenAI 프로젝트 결제/쿼터가 활성화되지 않으면 OpenAI 경로는 계속 `429 insufficient_quota`로 실패한다. Gemini 무료 티어도 소진되면 외부 모델 호출 자체가 불가능하다.
+- 다음 명령에서 참고할 내용: 같은 오류가 다시 나오면 서버 로그의 `OPENAI_TRANSCRIPTION_FAILED:429` 여부와 Gemini fallback 모델별 quota/parse 로그를 먼저 확인한다.
+- 날짜: 2026-05-08
+- 발생 화면: 파일 업로드 분석 / 직접 녹음 분석
+- 사용자에게 표시된 오류: 대화 원문 전사 품질 저하, Gemini quota 소진, 회의록 제목/전송 모달 UI 문제
+- 실제 원인 또는 의심 원인: 기존 Gemini 키의 2.5 Pro/Flash quota가 소진되어 fallback 품질이 낮아졌다. 회의록 제목 생성 함수가 제목을 괄호로 감쌌고, 회의록 전송 모달은 페이지 목록이 많을 때 footer 접근성이 떨어질 수 있었다.
+- 관련 파일: `.env.local`, `src/app/api/summarize/route.ts`, `src/lib/meeting-summary.ts`, `src/components/MeetingConfluenceModal.tsx`
+- 관련 함수/API: `buildMeetingTitle`, `modelsToTry`, `POST /api/summarize`, `MeetingConfluenceModal`
+- 수정 내용: 사용자가 제공한 새 Gemini 키로 교체했다. Gemini 모델 순서를 `gemini-2.5-pro -> gemini-2.5-flash -> gemini-2.5-flash-lite`로 조정했다. 회의록 제목의 괄호를 제거했다. 회의록 전송 모달은 header/footer를 고정하고 페이지 목록 영역만 스크롤되게 변경했다.
+- 남은 위험 요소: OpenAI API는 여전히 프로젝트 결제/쿼터가 활성화되지 않으면 `429 insufficient_quota`로 실패한다. Gemini도 새 키 quota가 소진되면 동일하게 fallback이 실패할 수 있다.
+- 다음 명령에서 참고할 내용: 키를 변경한 뒤에는 반드시 dev 서버를 재시작해야 한다. 전사 정확도 95% 수준은 실제 timestamp를 제공하는 OpenAI 전사 등 전용 STT 경로가 정상 동작할 때만 기대할 수 있다.
 - 시연 전 확인해야 할 테스트: `OPENAI_API_KEY`를 넣은 뒤 정상 음성 1개가 Gemini 실패 시 GPT로 넘어가는지 확인한다. OpenAI 키가 없을 경우에는 Gemini 경로만 동작하므로 free tier 한계를 다시 확인해야 한다.
 - 다음 명령에서 참고할 내용: GPT fallback을 실제로 쓰려면 먼저 `OPENAI_API_KEY`를 `.env.local`에 넣고 서버를 재시작한다.
 - 날짜: 2026-05-07

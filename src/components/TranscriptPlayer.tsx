@@ -59,9 +59,11 @@ export default function TranscriptPlayer({
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
+  const [syncOffset, setSyncOffset] = useState(0);
   const [query, setQuery] = useState("");
   const [speakerFilter, setSpeakerFilter] = useState("all");
-  const [audioError, setAudioError] = useState(false);
+  const [audioErrorState, setAudioErrorState] = useState({ audioUrl: "", hasError: false });
+  const audioError = Boolean(audioUrl && audioErrorState.audioUrl === audioUrl && audioErrorState.hasError);
 
   const hasTimedSegments = transcript.some(item => typeof getStart(item) === "number");
   const speakers = useMemo(() => (
@@ -104,6 +106,7 @@ export default function TranscriptPlayer({
 
   const getSegmentIndexForTime = (time: number) => {
     if (!hasTimedSegments) return -1;
+    const transcriptTime = Math.max(0, time - syncOffset);
 
     let fallback = -1;
     for (let index = 0; index < transcript.length; index += 1) {
@@ -111,8 +114,8 @@ export default function TranscriptPlayer({
       const start = getStart(item);
       const end = getEnd(item);
       if (typeof start !== "number") continue;
-      if (start <= time) fallback = index;
-      if (typeof end === "number" && start <= time && time <= end) return index;
+      if (start <= transcriptTime) fallback = index;
+      if (typeof end === "number" && start <= transcriptTime && transcriptTime <= end) return index;
     }
     return fallback;
   };
@@ -126,10 +129,11 @@ export default function TranscriptPlayer({
     const audio = audioRef.current;
     if (!audio || !audioUrl || typeof start !== "number") return;
 
-    audio.currentTime = start;
-    setCurrentTime(start);
+    const nextTime = Math.max(0, start + syncOffset);
+    audio.currentTime = nextTime;
+    setCurrentTime(nextTime);
     audio.play().catch(() => undefined);
-  }, [audioUrl, transcript]);
+  }, [audioUrl, syncOffset, transcript]);
 
   useEffect(() => {
     if (!jumpTarget) return;
@@ -152,6 +156,10 @@ export default function TranscriptPlayer({
     audio.currentTime = nextTime;
     setCurrentTime(nextTime);
     if (hasTimedSegments) setCurrentIndex(getSegmentIndexForTime(nextTime));
+  };
+
+  const adjustSyncOffset = (delta: number) => {
+    setSyncOffset(value => Number(Math.max(-5, Math.min(5, value + delta)).toFixed(1)));
   };
 
   return (
@@ -212,10 +220,17 @@ export default function TranscriptPlayer({
               ref={audioRef}
               className="hidden"
               src={audioUrl}
+              preload="metadata"
               onPlay={() => setIsPlaying(true)}
               onPause={() => setIsPlaying(false)}
-              onError={() => setAudioError(true)}
-              onLoadedMetadata={e => setDuration((e.currentTarget as HTMLAudioElement).duration || 0)}
+              onCanPlay={() => setAudioErrorState({ audioUrl: audioUrl || "", hasError: false })}
+              onError={() => setAudioErrorState({ audioUrl: audioUrl || "", hasError: true })}
+              onLoadedMetadata={e => {
+                const audio = e.currentTarget as HTMLAudioElement;
+                setDuration(audio.duration || 0);
+                setCurrentTime(audio.currentTime || 0);
+                setIsPlaying(false);
+              }}
               onRateChange={e => setPlaybackRate((e.currentTarget as HTMLAudioElement).playbackRate)}
               onTimeUpdate={e => {
                 const nextTime = (e.currentTarget as HTMLAudioElement).currentTime;
@@ -268,6 +283,15 @@ export default function TranscriptPlayer({
                 />
               </label>
             </div>
+            {hasTimedSegments ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/55">
+                <span className="font-bold text-white/60">싱크 보정</span>
+                <button type="button" onClick={() => adjustSyncOffset(-0.5)} className="rounded-lg bg-white/5 px-2 py-1 font-semibold text-white hover:bg-white/10">-0.5초</button>
+                <span className="min-w-14 text-center font-bold text-cyan-100">{syncOffset.toFixed(1)}초</span>
+                <button type="button" onClick={() => adjustSyncOffset(0.5)} className="rounded-lg bg-white/5 px-2 py-1 font-semibold text-white hover:bg-white/10">+0.5초</button>
+                <button type="button" onClick={() => setSyncOffset(0)} className="rounded-lg bg-white/5 px-2 py-1 font-semibold text-white hover:bg-white/10">초기화</button>
+              </div>
+            ) : null}
           </div>
         ) : (
           <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/50">

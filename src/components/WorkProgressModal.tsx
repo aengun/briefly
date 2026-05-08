@@ -42,7 +42,11 @@ type PageSearchPanelProps = {
 type WorkProgressModalProps = WorkProgressSource & {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess?: (data: any) => void;
+  onSuccess?: (data: {
+    unitPage?: ConfluencePageResult;
+    mainPage?: ConfluencePageResult;
+    mainProgressWork?: MainProgressWork;
+  }) => void;
 };
 
 const fieldClass = "w-full rounded-lg border border-white/15 bg-white/[0.06] px-3 py-2 text-sm text-white outline-none transition focus:border-amber-300/70 focus:bg-white/[0.09]";

@@ -1,3 +1,5 @@
+import { buildMeetingTitle, looksLikeSourceFileName } from "./meeting-summary";
+
 export type MeetingSourceType = "upload" | "realtime";
 
 export type MeetingParticipantInput = {
@@ -85,8 +87,20 @@ export function normalizeMeetingRecordInput(body: MeetingRecordInput) {
     }))
     .filter(item => item.task || item.assignee || item.dueDate);
 
+  const requestedTitle = asText(body.title);
+  const generatedTitle = buildMeetingTitle({
+    meetingDate: body.meetingDate,
+    summary: {
+      asis: summary.asis,
+      tobe: summary.tobe,
+      expected_effects: summary.expected_effects,
+      schedule,
+    },
+    transcript,
+  });
+
   return {
-    title: asText(body.title, "제목 없는 회의록") || "제목 없는 회의록",
+    title: requestedTitle && !looksLikeSourceFileName(requestedTitle) ? requestedTitle : generatedTitle,
     sourceType: normalizeSourceType(body.sourceType),
     audioUrl: asText(body.audioUrl),
     meetingDate: parseMeetingDate(body.meetingDate),

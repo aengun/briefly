@@ -13,6 +13,7 @@ import { validateAnalyzableContent } from '@/lib/analysis-guard';
 
 type SummaryPayload = {
   summary?: {
+    topic?: string;
     asis?: string;
     tobe?: string;
     expected_effects?: string;
@@ -46,6 +47,7 @@ type TranscriptResponseSchema = {
 
 type SummaryResponseSchema = {
   summary: {
+    topic?: string;
     asis: string;
     tobe: string;
     expected_effects: string;
@@ -172,6 +174,7 @@ const summaryResponseSchema = {
       type: SchemaType.OBJECT,
       properties: {
         asis: { type: SchemaType.STRING },
+        topic: { type: SchemaType.STRING },
         tobe: { type: SchemaType.STRING },
         expected_effects: { type: SchemaType.STRING },
         schedule: {
@@ -339,23 +342,42 @@ function classifyUnknownError(error: unknown, stage: AnalysisErrorBody["stage"] 
   };
 }
 
-// Robust JSON extraction helper
-function extractJSON(text: string): unknown {
-  try {
-    // Try finding JSON block
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    
-    // Basic cleanup of common AI artifacts in JSON
-    const jsonStr = match[0]
-      .replace(/\\n/g, "\\n")
-      .replace(/\\'/g, "'");
-      
-    return JSON.parse(jsonStr);
-  } catch (e) {
-    console.error('Failed to parse extracted JSON:', e);
-    return null;
+function extractBalancedJSONObject(text: string) {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") depth += 1;
+    if (char === "}") depth -= 1;
+
+    if (depth === 0) {
+      return text.slice(start, index + 1);
+    }
   }
+
+  return null;
 }
 
 function parseStructuredResponse<T>(text: string) {
@@ -371,26 +393,69 @@ function parseStructuredResponse<T>(text: string) {
   try {
     return JSON.parse(stripped) as T;
   } catch {
-    const extracted = extractJSON(stripped);
-    return extracted as T | null;
+    const extracted = extractBalancedJSONObject(stripped);
+    if (!extracted) return null;
+    try {
+      return JSON.parse(extracted) as T;
+    } catch {
+      return null;
+    }
   }
+}
+
+function parseJsonStringLiteral(value: string) {
+  try {
+    return JSON.parse(`"${value}"`) as string;
+  } catch {
+    return value.replace(/\\"/g, '"').replace(/\\n/g, "\n").trim();
+  }
+}
+
+function parseLooseTranscriptResponse(text: string): TranscriptPayload | null {
+  const transcript: NonNullable<TranscriptPayload["transcript"]> = [];
+  const objectMatches = text.match(/\{[\s\S]*?\}/g) || [];
+
+  for (const objectText of objectMatches) {
+    if (!/"text"\s*:/.test(objectText)) continue;
+    const textMatch = objectText.match(/"text"\s*:\s*"((?:\\.|[^"\\])*)"/);
+    if (!textMatch) continue;
+
+    const speakerMatch = objectText.match(/"speaker"\s*:\s*"((?:\\.|[^"\\])*)"/);
+    const startMatch = objectText.match(/"start"\s*:\s*(-?\d+(?:\.\d+)?)/);
+    const endMatch = objectText.match(/"end"\s*:\s*(-?\d+(?:\.\d+)?)/);
+    const utterance = parseJsonStringLiteral(textMatch[1]);
+    if (!utterance.trim()) continue;
+
+    transcript.push({
+      id: `seg-${transcript.length + 1}`,
+      speaker: speakerMatch ? parseJsonStringLiteral(speakerMatch[1]) : "화자 미분류",
+      text: utterance,
+      ...(startMatch ? { start: Number(startMatch[1]) } : {}),
+      ...(endMatch ? { end: Number(endMatch[1]) } : {}),
+    });
+  }
+
+  return transcript.length > 0 ? { transcript } : null;
 }
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function normalizeTranscriptSegments(transcript?: TranscriptPayload["transcript"]) {
+function normalizeTranscriptSegments(
+  transcript?: TranscriptPayload["transcript"],
+  options: { keepTiming?: boolean } = { keepTiming: true }
+) {
   return (transcript || [])
     .map((item, index) => {
-      const start = typeof item.start === "number"
+      const start = options.keepTiming !== false && typeof item.start === "number"
         ? item.start
-        : typeof item.startTime === "number"
+        : options.keepTiming !== false && typeof item.startTime === "number"
           ? item.startTime
           : undefined;
-      const end = typeof item.end === "number"
+      const end = options.keepTiming !== false && typeof item.end === "number"
         ? item.end
-        : typeof item.endTime === "number"
+        : options.keepTiming !== false && typeof item.endTime === "number"
           ? item.endTime
           : undefined;
 
@@ -403,6 +468,59 @@ function normalizeTranscriptSegments(transcript?: TranscriptPayload["transcript"
       };
     })
     .filter(item => item.text.trim());
+}
+
+function compactText(value?: string) {
+  return (value || "").replace(/\s+/g, " ").trim();
+}
+
+function isGenericUnknown(value?: string) {
+  const text = compactText(value).toLowerCase();
+  return !text || ["미정", "미확인", "없음", "unknown", "n/a", "-"].includes(text);
+}
+
+function appearsInTranscript(value: string | undefined, transcript: TranscriptPayload["transcript"]) {
+  const text = compactText(value);
+  if (!text || text.length < 2) return false;
+  const source = compactText((transcript || []).map(item => item.text || "").join(" "));
+  return source.includes(text);
+}
+
+function normalizeSummaryPayload(summaryData: SummaryPayload | Record<string, unknown>, transcript: TranscriptPayload["transcript"]): SummaryPayload {
+  const summarySource = summaryData && typeof summaryData === "object" && "summary" in summaryData
+    ? (summaryData as { summary?: Record<string, unknown> }).summary || {}
+    : summaryData || {};
+  const summary = summarySource as Record<string, unknown>;
+  const schedule = Array.isArray(summary.schedule)
+    ? summary.schedule
+      .map(item => ({
+        task: compactText((item as { task?: string })?.task),
+        assignee: appearsInTranscript((item as { assignee?: string })?.assignee, transcript) && !isGenericUnknown((item as { assignee?: string })?.assignee) ? compactText((item as { assignee?: string })?.assignee) : "",
+        dueDate: appearsInTranscript((item as { dueDate?: string })?.dueDate, transcript) && !isGenericUnknown((item as { dueDate?: string })?.dueDate) ? compactText((item as { dueDate?: string })?.dueDate) : "",
+      }))
+      .filter(item => item.task)
+    : [];
+
+  return {
+    summary: {
+      topic: compactText((summary.topic as string) || (summary.title as string) || (summary.mainTopic as string) || (summary.keyDiscussion as string)),
+      asis: compactText(summary.asis as string),
+      tobe: compactText(summary.tobe as string),
+      expected_effects: compactText(summary.expected_effects as string),
+      schedule,
+    },
+  };
+}
+
+function normalizeTranscriptPayload(transcriptData: TranscriptPayload | Record<string, unknown> | null, keepTiming = true): TranscriptPayload {
+  const rawTranscript = transcriptData && typeof transcriptData === "object" && "transcript" in transcriptData
+    ? (transcriptData as { transcript?: TranscriptPayload["transcript"] }).transcript
+    : Array.isArray(transcriptData)
+      ? transcriptData as TranscriptPayload["transcript"]
+      : [];
+  return {
+    transcript: normalizeTranscriptSegments(rawTranscript, { keepTiming }),
+  };
 }
 
 function toTranscriptRequest(fileUri: string, mimeType: string, prompt: string) {
@@ -432,12 +550,16 @@ function summarizePromptFromTranscript(transcript: TranscriptPayload["transcript
 3. 파일명, 업로드 시간, 녹음 시간만으로 회의 주제를 만들지 마세요.
 4. 근거가 부족한 필드는 빈 문자열("") 또는 빈 배열([])로 반환하세요.
 5. 회의 내용이 부족하면 모든 필드를 빈 값으로 반환하세요.
+6. topic은 간략하고 명료하게 작성하세요. 읽는 사람이 회의 주제를 즉시 알 수 있어야 합니다.
+7. topic은 줄임말이나 말줄임표로 끝내지 말고 완전한 단어로 끝내세요.
+8. topic 끝에 "관련 회의", "개선회의", "미팅", "검토 회의" 같은 포괄적인 회의 유형 표현을 붙이지 마세요.
 
 transcript:
 ${JSON.stringify(transcript || [])}
 
 {
   "summary": {
+    "topic": "회의 주제. transcript에 있는 내용만 기반으로 간략하고 명료하게 작성. 근거가 부족하면 빈 문자열.",
     "asis": "현재 상황과 직면한 문제점. transcript에 있는 내용만 작성.",
     "tobe": "개선 방향과 목적. transcript에 있는 내용만 작성.",
     "expected_effects": "기대효과. transcript에 있는 내용만 작성.",
@@ -538,7 +660,7 @@ async function transcribeWithOpenAI(uploadPath: string, mimeType: string, fileNa
       summaryData = parseStructuredResponse<SummaryResponseSchema>(summaryText) as SummaryPayload | null;
       if (summaryData) {
         return {
-          summaryData,
+          summaryData: normalizeSummaryPayload(summaryData, transcript),
           transcriptData: { transcript },
           usedModel: `openai:${modelName}`,
         };
@@ -568,11 +690,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    if (!apiKey) {
+    if (!apiKey && !openAIKey) {
       return createAnalysisErrorResponse(
         500,
         "CONFIG_ERROR",
-        "GEMINI_API_KEY가 설정되지 않았습니다.",
+        "GEMINI_API_KEY 또는 OPENAI_API_KEY가 설정되지 않았습니다.",
         "분석 서비스 설정에 문제가 있습니다. 관리자에게 문의해주세요.",
         "config"
       );
@@ -613,6 +735,34 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     await writeFile(uploadPath, buffer);
     const audioUrl = `/uploads/${fileName}`;
 
+    let openAIPrimaryError: unknown = null;
+    if (openAIKey) {
+      try {
+        const openAIResult = await transcribeWithOpenAI(uploadPath, mimeType, fileName);
+        return NextResponse.json({
+          ...openAIResult.summaryData,
+          transcript: openAIResult.transcriptData.transcript,
+          audioUrl,
+          usedModel: openAIResult.usedModel
+        });
+      } catch (error: unknown) {
+        openAIPrimaryError = error;
+        console.warn("OpenAI primary path failed, trying Gemini...", getErrorMessage(error));
+      }
+    }
+
+    if (!apiKey) {
+      const classified = classifyUnknownError(openAIPrimaryError || new Error("OPENAI_ANALYSIS_FAILED"), "transcription");
+      return createAnalysisErrorResponse(
+        classified.status,
+        classified.errorCode,
+        classified.message,
+        classified.userMessage,
+        classified.stage,
+        openAIPrimaryError
+      );
+    }
+
     // Upload to Gemini
     let uploadResult;
     try {
@@ -644,21 +794,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     let summaryData: SummaryPayload | null = null;
     let transcriptData: TranscriptPayload | null = null;
 
-    if (openAIKey) {
-      try {
-        const fallbackResult = await transcribeWithOpenAI(uploadPath, mimeType, fileName);
-        return NextResponse.json({
-          ...fallbackResult.summaryData,
-          transcript: fallbackResult.transcriptData.transcript,
-          audioUrl,
-          usedModel: fallbackResult.usedModel
-        });
-      } catch (fallbackError: unknown) {
-        lastError = fallbackError;
-        console.warn("OpenAI primary path failed, trying Gemini...", getErrorMessage(fallbackError));
-      }
-    }
-
     // 시도할 모델 우선순위 목록
     const modelsToTry = [
       'gemini-2.5-pro',
@@ -673,14 +808,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         // --- STEP 1: TRANSCRIPT PASS ---
         const transcriptPrompt = `
 오디오의 전체 대화 내역(transcript)을 다음 JSON 형식으로 변환해주세요.
+한국어 회의 음성을 우선 가정하고, 들리지 않는 단어는 억지로 보정하지 마세요.
 실제로 들리는 말만 적고, 파일명/업로드 시간/녹음 시간 같은 메타데이터는 사용하지 마세요.
 대화가 전혀 들리지 않거나 무음, 잡음, 짧은 테스트 음성뿐이라면 "transcript": [] 를 반환하세요.
 제공된 오디오에 없는 대화, 담당자, 주제, 업무 내용은 절대 만들지 마세요.
-가능하다면 각 발화의 시작/종료 시점을 초 단위 정수로 추정해 넣어주세요. 확실하지 않으면 생략해도 됩니다.
+정확한 timestamp를 제공할 수 없으면 start/end를 넣지 마세요. 추정 timestamp는 금지합니다.
 
 {
   "transcript": [
-    { "id": "seg-1", "speaker": "성함 또는 참가자 A", "text": "대화 내용", "start": 0, "end": 12 }
+    { "id": "seg-1", "speaker": "성함 또는 참가자 A", "text": "대화 내용" }
   ]
 }
 `;
@@ -694,9 +830,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           lastError = error;
           throw error;
         }
-        transcriptData = parseStructuredResponse<TranscriptResponseSchema>(tResult.response.text()) as TranscriptPayload | null;
-        if (!transcriptData) {
-          const transcriptText = tResult.response.text();
+        const transcriptText = tResult.response.text();
+        const parsedTranscript = (
+          parseStructuredResponse<TranscriptResponseSchema>(transcriptText) ||
+          parseLooseTranscriptResponse(transcriptText)
+        ) as TranscriptPayload | null;
+        if (!parsedTranscript) {
           console.warn(`Transcript parse failed for ${modelName}, trying OpenAI fallback...`, transcriptText.slice(0, 200));
           if (openAIKey) {
             try {
@@ -715,8 +854,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           lastError = new Error(`PARSE_FAILED: transcript:${modelName}`);
           continue;
         }
-        const normalizedTranscript = normalizeTranscriptSegments(transcriptData?.transcript);
-        transcriptData = { transcript: normalizedTranscript };
+        transcriptData = normalizeTranscriptPayload(parsedTranscript, false);
+        const normalizedTranscript = transcriptData.transcript;
         const validation = validateAnalyzableContent(normalizedTranscript);
         if (!validation.isAnalyzable) {
           return createAnalysisErrorResponse(
@@ -740,11 +879,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           lastError = error;
           throw error;
         }
-        summaryData = parseStructuredResponse<SummaryResponseSchema>(sResult.response.text()) as SummaryPayload | null;
-        if (!summaryData) {
+        const parsedSummary = parseStructuredResponse<SummaryResponseSchema>(sResult.response.text()) as SummaryPayload | null;
+        if (!parsedSummary) {
           lastError = new Error(`PARSE_FAILED: summary:${modelName}`);
           continue;
         }
+        summaryData = normalizeSummaryPayload(parsedSummary, transcriptData.transcript);
         
         successfulModel = modelName;
         break; // 성공 시 루프 탈출
@@ -789,7 +929,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     return NextResponse.json({
-      ...summaryData,
+      summary: normalizeSummaryPayload(summaryData, transcriptData?.transcript || []).summary,
       transcript: transcriptData?.transcript || [],
       audioUrl,
       usedModel: successfulModel // 어떤 모델이 사용되었는지 반환
