@@ -53,6 +53,16 @@ type WorkProgressModalProps = WorkProgressSource & {
   }) => void;
 };
 
+type WikiPreviewDialogProps = {
+  unitWorkPage: UnitWorkPage;
+  mainProgressWork: MainProgressWork;
+  selectedUnitParentPage: ConfluencePageResult | null;
+  selectedMainPage: ConfluencePageResult | null;
+  unitPreviewHtml: string;
+  mainPreviewHtml: string;
+  onClose: () => void;
+};
+
 const fieldClass = "w-full rounded-lg border border-white/15 bg-white/[0.06] px-3 py-2 text-sm text-white outline-none transition focus:border-amber-300/70 focus:bg-white/[0.09]";
 const compactFieldClass = "w-full rounded-md border border-white/15 bg-white/[0.06] px-2.5 py-1.5 text-xs text-white outline-none transition focus:border-amber-300/70 focus:bg-white/[0.09]";
 const textareaClass = `${fieldClass} min-h-20 resize-y leading-relaxed`;
@@ -179,6 +189,81 @@ function PageSearchPanel({
         {selectedPage ? `${selectedText}: ${selectedPage.title}` : selectedText}
       </div>
     </section>
+  );
+}
+
+function WikiPreviewDialog({
+  unitWorkPage,
+  mainProgressWork,
+  selectedUnitParentPage,
+  selectedMainPage,
+  unitPreviewHtml,
+  mainPreviewHtml,
+  onClose,
+}: WikiPreviewDialogProps) {
+  return (
+    <div
+      className="fixed inset-0 z-[110] flex items-center justify-center bg-black/75 p-3 backdrop-blur-sm sm:p-6"
+      onMouseDown={event => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="wiki-preview-title"
+        className="flex max-h-[92vh] w-full max-w-[1280px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl"
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-white/10 bg-white/[0.04] px-5 py-4 sm:px-6">
+          <div className="min-w-0">
+            <p className="mb-1 text-xs font-bold text-amber-300">Confluence storage HTML</p>
+            <h3 id="wiki-preview-title" className="text-xl font-bold text-white">WIKI 미리보기</h3>
+            <p className="mt-1 text-sm leading-relaxed text-white/55">
+              실제 Confluence에 전송되는 저장용 HTML 기준입니다. Confluence의 상단 메뉴, 댓글, 권한 표시 같은 페이지 외곽 UI는 제외됩니다.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="WIKI 미리보기 닫기"
+            className="rounded-full p-2 text-white/50 transition hover:bg-white/10 hover:text-white"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <article className="rounded-lg border border-amber-300/20 bg-black/20 p-3">
+              <div className="mb-3">
+                <h4 className="text-sm font-bold text-amber-100">생성될 단위업무 페이지</h4>
+                <p className="mt-1 text-xs text-white/55">{unitWorkPage.title || "페이지명 입력 필요"}</p>
+                <p className="mt-1 text-xs text-white/40">상위페이지: {selectedUnitParentPage?.title || "선택 필요"}</p>
+              </div>
+              <div className={wikiPreviewClass}>
+                <h2 className="mb-4 text-2xl font-semibold text-[#172b4d]">{unitWorkPage.title || "페이지명 입력 필요"}</h2>
+                <div dangerouslySetInnerHTML={{ __html: unitPreviewHtml }} />
+              </div>
+            </article>
+
+            <article className="rounded-lg border border-cyan-300/20 bg-black/20 p-3">
+              <div className="mb-3">
+                <h4 className="text-sm font-bold text-cyan-100">주요진행업무에 추가될 내용</h4>
+                <p className="mt-1 text-xs text-white/55">수정 페이지: {selectedMainPage?.title || "선택 필요"}</p>
+                <p className="mt-1 text-xs text-white/40">파트: {mainProgressWork.workGroup}</p>
+              </div>
+              <div
+                className={wikiPreviewClass}
+                dangerouslySetInnerHTML={{ __html: mainPreviewHtml }}
+              />
+              <p className="mt-2 text-xs leading-5 text-white/45">
+                단위업무 링크는 전송 직후 생성된 실제 페이지 URL로 자동 치환됩니다.
+              </p>
+            </article>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -475,13 +560,14 @@ export default function WorkProgressModal({
   const mainPreviewHtml = buildMainProgressWorkHtml(mainProgressWork);
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-3 backdrop-blur-md sm:p-5">
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="work-progress-title"
-        className="flex max-h-[92vh] w-full max-w-[1440px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl"
-      >
+    <>
+      <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-3 backdrop-blur-md sm:p-5">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="work-progress-title"
+          className="flex max-h-[92vh] w-full max-w-[1440px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl"
+        >
         <div className="flex items-start justify-between gap-4 border-b border-white/10 bg-white/[0.04] px-5 py-4 sm:px-6">
           <div className="min-w-0">
             <p className="mb-1 text-xs font-bold text-amber-300">회의록 기반 WIKI 전송</p>
@@ -878,51 +964,6 @@ export default function WorkProgressModal({
             </section>
           </div>
 
-          {showPreview && (
-            <section className="mt-4 rounded-lg border border-white/10 bg-white/[0.04] p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-base font-bold text-white">WIKI 미리보기</h3>
-                  <p className="mt-1 text-xs leading-5 text-white/55">
-                    실제 Confluence에 전송되는 저장용 HTML 기준입니다. Confluence의 상단 메뉴, 댓글, 권한 표시 같은 페이지 외곽 UI는 제외됩니다.
-                  </p>
-                </div>
-                <span className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-1 text-[11px] font-semibold text-white/55">
-                  Confluence storage HTML
-                </span>
-              </div>
-
-              <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-                <article className="rounded-lg border border-amber-300/20 bg-black/20 p-3">
-                  <div className="mb-3">
-                    <h4 className="text-sm font-bold text-amber-100">생성될 단위업무 페이지</h4>
-                    <p className="mt-1 text-xs text-white/55">{unitWorkPage.title || "페이지명 입력 필요"}</p>
-                    <p className="mt-1 text-xs text-white/40">상위페이지: {selectedUnitParentPage?.title || "선택 필요"}</p>
-                  </div>
-                  <div className={wikiPreviewClass}>
-                    <h2 className="mb-4 text-2xl font-semibold text-[#172b4d]">{unitWorkPage.title || "페이지명 입력 필요"}</h2>
-                    <div dangerouslySetInnerHTML={{ __html: unitPreviewHtml }} />
-                  </div>
-                </article>
-
-                <article className="rounded-lg border border-cyan-300/20 bg-black/20 p-3">
-                  <div className="mb-3">
-                    <h4 className="text-sm font-bold text-cyan-100">주요진행업무에 추가될 내용</h4>
-                    <p className="mt-1 text-xs text-white/55">수정 페이지: {selectedMainPage?.title || "선택 필요"}</p>
-                    <p className="mt-1 text-xs text-white/40">파트: {mainProgressWork.workGroup}</p>
-                  </div>
-                  <div
-                    className={wikiPreviewClass}
-                    dangerouslySetInnerHTML={{ __html: mainPreviewHtml }}
-                  />
-                  <p className="mt-2 text-xs leading-5 text-white/45">
-                    단위업무 링크는 전송 직후 생성된 실제 페이지 URL로 자동 치환됩니다.
-                  </p>
-                </article>
-              </div>
-            </section>
-          )}
-
         </div>
 
         <div className="flex flex-col gap-2 border-t border-white/10 bg-white/[0.03] px-5 py-3 sm:flex-row sm:items-center sm:justify-end sm:px-6">
@@ -935,11 +976,11 @@ export default function WorkProgressModal({
           </button>
           <button
             type="button"
-            onClick={() => setShowPreview(prev => !prev)}
+            onClick={() => setShowPreview(true)}
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-white/10 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/20"
           >
             <Eye className="h-4 w-4" />
-            {showPreview ? "미리보기 닫기" : "미리보기"}
+            미리보기
           </button>
           <button
             type="button"
@@ -952,6 +993,18 @@ export default function WorkProgressModal({
           </button>
         </div>
       </div>
-    </div>
+      </div>
+      {showPreview && (
+        <WikiPreviewDialog
+          unitWorkPage={unitWorkPage}
+          mainProgressWork={mainProgressWork}
+          selectedUnitParentPage={selectedUnitParentPage}
+          selectedMainPage={selectedMainPage}
+          unitPreviewHtml={unitPreviewHtml}
+          mainPreviewHtml={mainPreviewHtml}
+          onClose={() => setShowPreview(false)}
+        />
+      )}
+    </>
   );
 }
