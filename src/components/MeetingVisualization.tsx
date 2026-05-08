@@ -80,8 +80,7 @@ const normalize = (value: string) => value
 const splitCompact = (value: string) => value
   .split(/\n|\.|ㆍ|-/)
   .map(item => item.trim())
-  .filter(item => item.length >= 4)
-  .slice(0, 2);
+  .filter(item => item.length >= 4);
 
 const clip = (value: string, limit = 44) => {
   const compact = value.replace(/\s+/g, " ").trim();
@@ -115,9 +114,8 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
   const directionLines = splitCompact(summary.tobe);
   const effectLines = splitCompact(summary.expected_effects);
   const actionLines = summary.schedule
-    .map(item => clip([item.task, item.assignee, item.dueDate].filter(Boolean).join(" · "), 42))
-    .filter(Boolean)
-    .slice(0, 2);
+    .map(item => [item.task, item.assignee, item.dueDate].filter(Boolean).join(" · "))
+    .filter(Boolean);
 
   const timelineLabel = transcript.slice(0, 3).map((segment, index) => {
     const start = formatTime(getStart(segment));
@@ -141,7 +139,7 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
   const riskMatches = transcript
     .map((segment, index) => ({ segment, index }))
     .filter(({ segment }) => /(리스크|위험|문제|이슈|불가|지연|미정|확인 필요|보류)/.test(segment.text));
-  const riskLines = riskMatches.slice(0, 2).map(({ segment }) => clip(segment.text, 42));
+  const riskLines = riskMatches.map(({ segment }) => segment.text);
   const riskIndex = riskMatches.length > 0 ? riskMatches[0].index : -1;
 
   const actionIndex = summary.schedule.length > 0
@@ -159,10 +157,10 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
       ],
       icon: Gauge,
       tone: "slate",
-      x: 24,
-      y: 74,
-      w: 176,
-      h: 148,
+      x: 20,
+      y: 54,
+      w: 228,
+      h: 215,
       segmentIndex: firstSegmentIndex,
       rounded: "rounded-[30px]",
       subtle: "bg-white/10",
@@ -174,10 +172,10 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
       detail: issueLines.length > 0 ? issueLines : ["분석 결과 없음"],
       icon: AlertTriangle,
       tone: "rose",
-      x: 238,
+      x: 278,
       y: 54,
       w: 228,
-      h: 184,
+      h: 215,
       segmentIndex: findGroundedSegment(transcript, summary.asis),
       rounded: "rounded-[30px]",
       subtle: "bg-rose-400/10",
@@ -189,10 +187,10 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
       detail: directionLines.length > 0 ? directionLines : ["분석 결과 없음"],
       icon: Lightbulb,
       tone: "cyan",
-      x: 490,
+      x: 536,
       y: 54,
       w: 228,
-      h: 184,
+      h: 215,
       segmentIndex: findGroundedSegment(transcript, summary.tobe),
       rounded: "rounded-[30px]",
       subtle: "bg-cyan-400/10",
@@ -204,10 +202,10 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
       detail: effectLines.length > 0 ? effectLines : ["분석 결과 없음"],
       icon: CheckCircle2,
       tone: "emerald",
-      x: 742,
+      x: 794,
       y: 54,
       w: 228,
-      h: 184,
+      h: 215,
       segmentIndex: findGroundedSegment(transcript, summary.expected_effects),
       rounded: "rounded-[30px]",
       subtle: "bg-emerald-400/10",
@@ -219,10 +217,10 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
       detail: actionLines.length > 0 ? actionLines : ["등록된 일감 없음"],
       icon: ClipboardList,
       tone: "amber",
-      x: 994,
+      x: 1052,
       y: 54,
       w: 228,
-      h: 184,
+      h: 215,
       segmentIndex: actionIndex,
       rounded: "rounded-[30px]",
       subtle: "bg-amber-400/10",
@@ -234,10 +232,10 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
       detail: timelineLabel.length > 0 ? timelineLabel : ["원문 순서만 확인 가능"],
       icon: Clock3,
       tone: "violet",
-      x: 72,
+      x: 20,
       y: 332,
       w: 260,
-      h: 122,
+      h: 140,
       segmentIndex: hasTimedSegments ? firstTimedSegmentIndex : firstSegmentIndex,
       rounded: "rounded-[24px]",
       subtle: "bg-violet-400/10",
@@ -249,10 +247,10 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
       detail: actionLines.length > 0 ? actionLines : ["근거 연결 불명확"],
       icon: Route,
       tone: "cyan",
-      x: 372,
+      x: 340,
       y: 332,
       w: 260,
-      h: 122,
+      h: 140,
       segmentIndex: actionIndex,
       rounded: "rounded-[24px]",
       subtle: "bg-cyan-400/10",
@@ -264,10 +262,10 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
       detail: riskLines.length > 0 ? riskLines : ["원문에서 별도 리스크 없음"],
       icon: ShieldAlert,
       tone: "rose",
-      x: 672,
+      x: 660,
       y: 332,
       w: 260,
-      h: 122,
+      h: 140,
       segmentIndex: riskIndex,
       rounded: "rounded-[24px]",
       subtle: "bg-rose-400/10",
@@ -282,10 +280,10 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
       ],
       icon: UsersRound,
       tone: "fuchsia",
-      x: 972,
+      x: 980,
       y: 332,
       w: 260,
-      h: 122,
+      h: 140,
       segmentIndex: speakerIndex,
       rounded: "rounded-[24px]",
       subtle: "bg-fuchsia-400/10",
@@ -293,14 +291,10 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
   ];
 
   const connectors: Connector[] = [
-    { from: { x: 200, y: 150 }, to: { x: 238, y: 150 } },
-    { from: { x: 466, y: 150 }, to: { x: 490, y: 150 } },
-    { from: { x: 718, y: 150 }, to: { x: 742, y: 150 } },
-    { from: { x: 970, y: 150 }, to: { x: 994, y: 150 } },
-    { from: { x: 202, y: 258 }, to: { x: 202, y: 332 }, dashed: true },
-    { from: { x: 512, y: 258 }, to: { x: 502, y: 332 }, dashed: true },
-    { from: { x: 802, y: 258 }, to: { x: 802, y: 332 }, dashed: true },
-    { from: { x: 1102, y: 258 }, to: { x: 1102, y: 332 }, dashed: true },
+    { from: { x: 134, y: 289 }, to: { x: 134, y: 332 }, dashed: true },
+    { from: { x: 392, y: 289 }, to: { x: 410, y: 332 }, dashed: true },
+    { from: { x: 650, y: 289 }, to: { x: 730, y: 332 }, dashed: true },
+    { from: { x: 1166, y: 289 }, to: { x: 1110, y: 332 }, dashed: true },
   ];
 
   return (
@@ -314,23 +308,14 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
         </span>
       </div>
 
-      <div className="overflow-x-auto rounded-[28px] border border-white/10 bg-[radial-gradient(circle_at_top,_rgba(56,189,248,0.12),_transparent_40%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01))]">
+      <div className="overflow-x-auto rounded-[28px] border border-white/10 bg-slate-900/40">
         <div className="relative min-w-[1280px] h-[540px]">
           <svg className="absolute inset-0 h-full w-full" viewBox="0 0 1280 540" preserveAspectRatio="none" aria-hidden="true">
             <defs>
-              <marker id="diagram-arrow" markerWidth="12" markerHeight="12" refX="8" refY="6" orient="auto">
-                <path d="M0,0 L12,6 L0,12 Z" fill="white" fillOpacity="0.28" />
-              </marker>
+              {/* 화살표 무늬 제거 */}
             </defs>
-            <g stroke="rgba(255,255,255,0.08)" strokeWidth="1">
-              {Array.from({ length: 12 }).map((_, index) => (
-                <line key={`v-${index}`} x1={index * 116} y1="0" x2={index * 116} y2="540" />
-              ))}
-              {Array.from({ length: 8 }).map((_, index) => (
-                <line key={`h-${index}`} x1="0" y1={index * 68} x2="1280" y2={index * 68} />
-              ))}
-            </g>
-            <g fill="none" stroke="rgba(255,255,255,0.32)" strokeWidth="3.5" markerEnd="url(#diagram-arrow)">
+            {/* 격자선 제거 (산만함 방지) */}
+            <g fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="2.5">
               {connectors.map((connector, index) => (
                 <path
                   key={`connector-${index}`}
@@ -348,14 +333,12 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
             const Icon = node.icon;
             const clickable = node.segmentIndex >= 0;
             return (
-              <button
+              <div
                 key={node.id}
-                type="button"
                 onClick={() => clickable && onJump(node.segmentIndex)}
-                disabled={!clickable}
                 aria-label={`${node.title}${clickable ? " 원문으로 이동" : ""}`}
-                className={`absolute ${node.rounded} border border-white/10 ${node.subtle || "bg-white/5"} p-4 text-left transition duration-200 ${
-                  clickable ? "hover:-translate-y-1 hover:border-white/20 hover:bg-white/10" : "cursor-default opacity-75"
+                className={`absolute ${node.rounded} border border-white/10 ${node.subtle || "bg-white/5"} overflow-hidden p-4 text-left transition duration-200 ${
+                  clickable ? "cursor-pointer hover:-translate-y-1 hover:border-white/20 hover:bg-white/10" : "cursor-default opacity-75"
                 }`}
                 style={{ left: node.x, top: node.y, width: node.w, height: node.h }}
               >
@@ -386,13 +369,17 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
 
                 <div className="mt-3">
                   <p className="text-sm font-bold text-white">{node.title}</p>
-                  <div className="mt-2 space-y-1 text-xs leading-relaxed text-white/70">
-                    {node.detail.slice(0, 2).map(line => (
-                      <p key={line}>{clip(line, node.w > 230 ? 48 : 32)}</p>
+                  <div 
+                    className="mt-2 space-y-2 text-xs leading-relaxed text-white/70 overflow-y-auto scrollbar-thin pr-1"
+                    style={{ maxHeight: node.h - 100 }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {node.detail.map((line, i) => (
+                      <p key={i} className="break-words border-l border-white/10 pl-2">{line}</p>
                     ))}
                   </div>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
