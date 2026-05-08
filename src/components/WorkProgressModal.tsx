@@ -203,7 +203,7 @@ function WikiPreviewDialog({
 }: WikiPreviewDialogProps) {
   return (
     <div
-      className="fixed inset-0 z-[110] flex items-center justify-center bg-black/75 p-3 backdrop-blur-sm sm:p-6"
+      className="fixed inset-0 z-[110] flex items-center justify-center bg-black/75 p-2 backdrop-blur-sm sm:p-4"
       onMouseDown={event => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -212,7 +212,7 @@ function WikiPreviewDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="wiki-preview-title"
-        className="flex max-h-[92vh] w-full max-w-[1280px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl"
+        className="flex max-h-[92vh] w-full max-w-[1680px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl"
       >
         <div className="flex items-start justify-between gap-4 border-b border-white/10 bg-white/[0.04] px-5 py-4 sm:px-6">
           <div className="min-w-0">
@@ -233,7 +233,7 @@ function WikiPreviewDialog({
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 sm:p-5">
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:gap-5">
             <article className="rounded-lg border border-amber-300/20 bg-black/20 p-3">
               <div className="mb-3">
                 <h4 className="text-sm font-bold text-amber-100">생성될 단위업무 페이지</h4>
