@@ -3,7 +3,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
   AlertTriangle,
-  ArrowRight,
   CheckCircle2,
   Clock3,
   ClipboardList,
@@ -31,29 +30,16 @@ type MeetingSummary = {
 type MeetingVisualizationProps = {
   transcript: TranscriptItem[];
   summary: MeetingSummary;
-  onJump: (index: number) => void;
 };
 
 type DiagramNode = {
   id: string;
-  step: string;
   title: string;
   detail: string[];
   icon: LucideIcon;
   tone: "cyan" | "fuchsia" | "emerald" | "amber" | "rose" | "violet" | "slate";
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  segmentIndex: number;
-  rounded: string;
   subtle?: string;
-};
-
-type Connector = {
-  from: { x: number; y: number };
-  to: { x: number; y: number };
-  dashed?: boolean;
+  group: "flow" | "context";
 };
 
 const getStart = (item: TranscriptItem) => (
@@ -71,42 +57,14 @@ const formatTime = (seconds?: number) => {
   return `${mm}:${ss}`;
 };
 
-const normalize = (value: string) => value
-  .toLowerCase()
-  .replace(/[^가-힣a-z0-9\s]/g, " ")
-  .replace(/\s+/g, " ")
-  .trim();
-
 const splitCompact = (value: string) => value
   .split(/\n|\.|ㆍ|-/)
   .map(item => item.trim())
   .filter(item => item.length >= 4);
 
-const clip = (value: string, limit = 44) => {
-  const compact = value.replace(/\s+/g, " ").trim();
-  if (compact.length <= limit) return compact;
-  return `${compact.slice(0, limit - 1)}…`;
-};
-
-function findGroundedSegment(transcript: TranscriptItem[], text: string) {
-  const words = normalize(text).split(" ").filter(word => word.length >= 2);
-  if (words.length === 0) return -1;
-
-  let best = { index: -1, score: 0 };
-  transcript.forEach((segment, index) => {
-    const normalizedText = normalize(segment.text);
-    const score = words.reduce((sum, word) => sum + (normalizedText.includes(word) ? 1 : 0), 0);
-    if (score > best.score) best = { index, score };
-  });
-
-  return best.score >= Math.min(2, words.length) ? best.index : -1;
-}
-
-export default function MeetingVisualization({ transcript, summary, onJump }: MeetingVisualizationProps) {
+export default function MeetingVisualization({ transcript, summary }: MeetingVisualizationProps) {
   const hasTranscript = transcript.length > 0;
-  const hasTimedSegments = transcript.some(item => typeof getStart(item) === "number");
 
-  const firstSegmentIndex = transcript.length > 0 ? 0 : -1;
   const firstTimedSegmentIndex = transcript.findIndex(item => typeof getStart(item) === "number");
   const firstTimedLabel = firstTimedSegmentIndex >= 0 ? formatTime(getStart(transcript[firstTimedSegmentIndex])) : null;
 
@@ -134,22 +92,25 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
 
   const speakerLabel = speakerStats.length > 0 ? speakerStats[0][0] : "화자 정보 없음";
   const speakerCount = speakerStats.length > 0 ? speakerStats[0][1].count : 0;
-  const speakerIndex = speakerStats.length > 0 ? speakerStats[0][1].index : -1;
 
   const riskMatches = transcript
     .map((segment, index) => ({ segment, index }))
     .filter(({ segment }) => /(리스크|위험|문제|이슈|불가|지연|미정|확인 필요|보류)/.test(segment.text));
   const riskLines = riskMatches.map(({ segment }) => segment.text);
-  const riskIndex = riskMatches.length > 0 ? riskMatches[0].index : -1;
 
-  const actionIndex = summary.schedule.length > 0
-    ? findGroundedSegment(transcript, summary.schedule.map(item => [item.task, item.assignee, item.dueDate].filter(Boolean).join(" ")).join(" "))
-    : -1;
+  const toneClass = (tone: DiagramNode["tone"]) => {
+    if (tone === "rose") return "bg-rose-500/20 text-rose-100";
+    if (tone === "cyan") return "bg-cyan-500/20 text-cyan-100";
+    if (tone === "emerald") return "bg-emerald-500/20 text-emerald-100";
+    if (tone === "amber") return "bg-amber-500/20 text-amber-100";
+    if (tone === "fuchsia") return "bg-fuchsia-500/20 text-fuchsia-100";
+    if (tone === "violet") return "bg-violet-500/20 text-violet-100";
+    return "bg-white/10 text-white";
+  };
 
   const diagramNodes: DiagramNode[] = [
     {
       id: "start",
-      step: "START",
       title: "회의 시작",
       detail: [
         hasTranscript ? `원문 ${transcript.length}개` : "저장된 원문 없음",
@@ -157,122 +118,74 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
       ],
       icon: Gauge,
       tone: "slate",
-      x: 20,
-      y: 54,
-      w: 228,
-      h: 215,
-      segmentIndex: firstSegmentIndex,
-      rounded: "rounded-[30px]",
       subtle: "bg-white/10",
+      group: "flow",
     },
     {
       id: "issue",
-      step: "01",
       title: "현황 / 문제점",
       detail: issueLines.length > 0 ? issueLines : ["분석 결과 없음"],
       icon: AlertTriangle,
       tone: "rose",
-      x: 278,
-      y: 54,
-      w: 228,
-      h: 215,
-      segmentIndex: findGroundedSegment(transcript, summary.asis),
-      rounded: "rounded-[30px]",
       subtle: "bg-rose-400/10",
+      group: "flow",
     },
     {
       id: "direction",
-      step: "02",
       title: "개선 방향",
       detail: directionLines.length > 0 ? directionLines : ["분석 결과 없음"],
       icon: Lightbulb,
       tone: "cyan",
-      x: 536,
-      y: 54,
-      w: 228,
-      h: 215,
-      segmentIndex: findGroundedSegment(transcript, summary.tobe),
-      rounded: "rounded-[30px]",
       subtle: "bg-cyan-400/10",
+      group: "flow",
     },
     {
       id: "effect",
-      step: "03",
       title: "기대 효과",
       detail: effectLines.length > 0 ? effectLines : ["분석 결과 없음"],
       icon: CheckCircle2,
       tone: "emerald",
-      x: 794,
-      y: 54,
-      w: 228,
-      h: 215,
-      segmentIndex: findGroundedSegment(transcript, summary.expected_effects),
-      rounded: "rounded-[30px]",
       subtle: "bg-emerald-400/10",
+      group: "flow",
     },
     {
       id: "action",
-      step: "04",
       title: "일감 / 후속조치",
       detail: actionLines.length > 0 ? actionLines : ["등록된 일감 없음"],
       icon: ClipboardList,
       tone: "amber",
-      x: 1052,
-      y: 54,
-      w: 228,
-      h: 215,
-      segmentIndex: actionIndex,
-      rounded: "rounded-[30px]",
       subtle: "bg-amber-400/10",
+      group: "flow",
     },
     {
       id: "timeline",
-      step: "A",
       title: "타임라인",
       detail: timelineLabel.length > 0 ? timelineLabel : ["원문 순서만 확인 가능"],
       icon: Clock3,
       tone: "violet",
-      x: 20,
-      y: 332,
-      w: 260,
-      h: 140,
-      segmentIndex: hasTimedSegments ? firstTimedSegmentIndex : firstSegmentIndex,
-      rounded: "rounded-[24px]",
       subtle: "bg-violet-400/10",
+      group: "context",
     },
     {
       id: "decision",
-      step: "B",
       title: "결정 / 액션",
       detail: actionLines.length > 0 ? actionLines : ["근거 연결 불명확"],
       icon: Route,
       tone: "cyan",
-      x: 340,
-      y: 332,
-      w: 260,
-      h: 140,
-      segmentIndex: actionIndex,
-      rounded: "rounded-[24px]",
       subtle: "bg-cyan-400/10",
+      group: "context",
     },
     {
       id: "risk",
-      step: "C",
       title: "리스크 / 미결정",
       detail: riskLines.length > 0 ? riskLines : ["원문에서 별도 리스크 없음"],
       icon: ShieldAlert,
       tone: "rose",
-      x: 660,
-      y: 332,
-      w: 260,
-      h: 140,
-      segmentIndex: riskIndex,
-      rounded: "rounded-[24px]",
       subtle: "bg-rose-400/10",
+      group: "context",
     },
     {
       id: "speaker",
-      step: "D",
       title: "참여자",
       detail: [
         speakerLabel,
@@ -280,26 +193,41 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
       ],
       icon: UsersRound,
       tone: "fuchsia",
-      x: 980,
-      y: 332,
-      w: 260,
-      h: 140,
-      segmentIndex: speakerIndex,
-      rounded: "rounded-[24px]",
       subtle: "bg-fuchsia-400/10",
+      group: "context",
     },
   ];
 
-  const connectors: Connector[] = [
-    { from: { x: 134, y: 289 }, to: { x: 134, y: 332 }, dashed: true },
-    { from: { x: 392, y: 289 }, to: { x: 410, y: 332 }, dashed: true },
-    { from: { x: 650, y: 289 }, to: { x: 730, y: 332 }, dashed: true },
-    { from: { x: 1166, y: 289 }, to: { x: 1110, y: 332 }, dashed: true },
-  ];
+  const flowNodes = diagramNodes.filter(node => node.group === "flow");
+  const contextNodes = diagramNodes.filter(node => node.group === "context");
+  const renderCard = (node: DiagramNode, size: "flow" | "context") => {
+    const Icon = node.icon;
+    return (
+      <section
+        key={node.id}
+        aria-label={node.title}
+        className={`flex min-h-0 flex-col rounded-3xl border border-white/10 ${node.subtle || "bg-white/5"} p-4 text-left sm:p-5 ${
+          size === "flow" ? "h-[300px]" : "h-[260px]"
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          <div className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 ${toneClass(node.tone)}`}>
+            <Icon className="h-5 w-5" />
+          </div>
+          <p className="min-w-0 text-base font-bold leading-snug text-white">{node.title}</p>
+        </div>
+        <div className="mt-4 min-h-0 flex-1 overscroll-contain rounded-2xl border border-white/5 bg-black/10 px-3 py-3 text-sm leading-6 text-white/78 overflow-y-auto scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
+          {node.detail.map((line, index) => (
+            <p key={index} className="break-words border-l border-white/10 pl-3">{line}</p>
+          ))}
+        </div>
+      </section>
+    );
+  };
 
   return (
     <div className="rounded-[32px] border border-white/10 bg-slate-950/65 p-4 shadow-[0_20px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:p-6">
-      <div className="mb-4 flex items-center justify-between gap-3">
+      <div className="mb-5 flex items-center justify-between gap-3">
         <span className="rounded-full border border-cyan-400/20 bg-cyan-500/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.3em] text-cyan-200">
           도식 캔버스
         </span>
@@ -308,80 +236,20 @@ export default function MeetingVisualization({ transcript, summary, onJump }: Me
         </span>
       </div>
 
-      <div className="overflow-x-auto rounded-[28px] border border-white/10 bg-slate-900/40">
-        <div className="relative min-w-[1280px] h-[540px]">
-          <svg className="absolute inset-0 h-full w-full" viewBox="0 0 1280 540" preserveAspectRatio="none" aria-hidden="true">
-            <defs>
-              {/* 화살표 무늬 제거 */}
-            </defs>
-            {/* 격자선 제거 (산만함 방지) */}
-            <g fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="2.5">
-              {connectors.map((connector, index) => (
-                <path
-                  key={`connector-${index}`}
-                  d={connector.dashed
-                    ? `M ${connector.from.x} ${connector.from.y} C ${connector.from.x}, ${connector.from.x} ${(connector.from.y + connector.to.y) / 2}, ${connector.to.x} ${connector.to.y}`
-                    : `M ${connector.from.x} ${connector.from.y} C ${connector.from.x + 28} ${connector.from.y}, ${connector.to.x - 28} ${connector.to.y}, ${connector.to.x} ${connector.to.y}`
-                  }
-                  strokeDasharray={connector.dashed ? "8 8" : "0"}
-                />
-              ))}
-            </g>
-          </svg>
-
-          {diagramNodes.map(node => {
-            const Icon = node.icon;
-            const clickable = node.segmentIndex >= 0;
-            return (
-              <div
-                key={node.id}
-                onClick={() => clickable && onJump(node.segmentIndex)}
-                aria-label={`${node.title}${clickable ? " 원문으로 이동" : ""}`}
-                className={`absolute ${node.rounded} border border-white/10 ${node.subtle || "bg-white/5"} overflow-hidden p-4 text-left transition duration-200 ${
-                  clickable ? "cursor-pointer hover:-translate-y-1 hover:border-white/20 hover:bg-white/10" : "cursor-default opacity-75"
-                }`}
-                style={{ left: node.x, top: node.y, width: node.w, height: node.h }}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[10px] font-black tracking-[0.25em] text-white/70">
-                    {node.step}
-                  </span>
-                  {clickable ? <ArrowRight className="h-4 w-4 shrink-0 text-white/35" /> : null}
-                </div>
-
-                <div className={`mt-3 inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 text-white ${
-                  node.tone === "rose"
-                    ? "bg-rose-500/20 text-rose-100"
-                    : node.tone === "cyan"
-                      ? "bg-cyan-500/20 text-cyan-100"
-                      : node.tone === "emerald"
-                        ? "bg-emerald-500/20 text-emerald-100"
-                        : node.tone === "amber"
-                          ? "bg-amber-500/20 text-amber-100"
-                          : node.tone === "fuchsia"
-                            ? "bg-fuchsia-500/20 text-fuchsia-100"
-                            : node.tone === "violet"
-                              ? "bg-violet-500/20 text-violet-100"
-                              : "bg-white/10 text-white"
-                }`}>
-                  <Icon className="h-5 w-5" />
-                </div>
-
-                <div className="mt-3">
-                  <p className="text-sm font-bold text-white">{node.title}</p>
-                  <div 
-                    className="mt-2 space-y-2 text-xs leading-relaxed text-white/70 overflow-y-auto scrollbar-thin pr-1"
-                    style={{ maxHeight: node.h - 100 }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {node.detail.map((line, i) => (
-                      <p key={i} className="break-words border-l border-white/10 pl-2">{line}</p>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+      <div className="space-y-5 rounded-[28px] border border-white/10 bg-slate-900/40 p-3 sm:p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h5 className="text-sm font-extrabold tracking-wide text-white/80">핵심 흐름</h5>
+          <div className="h-px flex-1 bg-gradient-to-r from-white/15 to-transparent" />
+        </div>
+        <div className="grid gap-4 xl:grid-cols-5">
+          {flowNodes.map(node => renderCard(node, "flow"))}
+        </div>
+        <div className="flex items-center justify-between gap-3 pt-1">
+          <h5 className="text-sm font-extrabold tracking-wide text-white/80">참고 정보</h5>
+          <div className="h-px flex-1 bg-gradient-to-r from-white/15 to-transparent" />
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {contextNodes.map(node => renderCard(node, "context"))}
         </div>
       </div>
     </div>

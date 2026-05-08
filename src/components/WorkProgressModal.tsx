@@ -19,6 +19,10 @@ import {
   type WorkGroup,
   type WorkProgressSource,
 } from "@/lib/work-progress";
+import {
+  buildMainProgressWorkHtml,
+  buildUnitWorkPageHtml,
+} from "@/lib/confluence-storage";
 
 type ConfluencePageResult = {
   id: string;
@@ -52,6 +56,7 @@ type WorkProgressModalProps = WorkProgressSource & {
 const fieldClass = "w-full rounded-lg border border-white/15 bg-white/[0.06] px-3 py-2 text-sm text-white outline-none transition focus:border-amber-300/70 focus:bg-white/[0.09]";
 const compactFieldClass = "w-full rounded-md border border-white/15 bg-white/[0.06] px-2.5 py-1.5 text-xs text-white outline-none transition focus:border-amber-300/70 focus:bg-white/[0.09]";
 const textareaClass = `${fieldClass} min-h-20 resize-y leading-relaxed`;
+const wikiPreviewClass = "max-h-[520px] overflow-auto rounded-md bg-white p-5 text-sm leading-6 text-[#172b4d] shadow-inner [&_a]:font-semibold [&_a]:text-[#0c66e4] [&_h2]:mb-3 [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:text-[#172b4d] [&_h3]:mb-2 [&_h3]:mt-5 [&_h3:first-child]:mt-0 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:text-[#172b4d] [&_li]:mb-1 [&_small]:text-[#626f86] [&_table]:mt-2 [&_table]:min-w-[760px] [&_table]:text-sm [&_th]:font-semibold [&_th]:text-[#172b4d] [&_td]:text-[#172b4d] [&_ul]:ml-5 [&_ul]:list-disc";
 
 function normalizeSearchText(value: string) {
   return value
@@ -466,6 +471,9 @@ export default function WorkProgressModal({
 
   const visibleUnitPages = filterPages(unitPages, unitSearchQuery);
   const visibleMainPages = filterPages(mainPages, mainSearchQuery);
+  const unitPreviewHtml = buildUnitWorkPageHtml(unitWorkPage);
+  const mainPreviewHtml = buildMainProgressWorkHtml(mainProgressWork);
+
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-3 backdrop-blur-md sm:p-5">
       <div
@@ -872,28 +880,45 @@ export default function WorkProgressModal({
 
           {showPreview && (
             <section className="mt-4 rounded-lg border border-white/10 bg-white/[0.04] p-4">
-              <h3 className="text-base font-bold text-white">미리보기</h3>
-              <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <div className="space-y-2 rounded-lg border border-white/10 bg-black/15 p-3 text-xs text-white/65">
-                  <h4 className="font-semibold text-amber-200">{unitWorkPage.title}</h4>
-                  <p>현황/문제점: {unitWorkPage.statusProblemItems.length}건</p>
-                  <p>개선방향: {unitWorkPage.improvementGoalItems.length}건</p>
-                  <p>기대효과: {unitWorkPage.expectedEffectItems.length}건</p>
-                  <p>일감내용 및 일정: {unitWorkPage.scheduleRows.length}건</p>
-                  <p>진행 내역: {unitWorkPage.historyRows.length}건</p>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-bold text-white">WIKI 미리보기</h3>
+                  <p className="mt-1 text-xs leading-5 text-white/55">
+                    실제 Confluence에 전송되는 저장용 HTML 기준입니다. Confluence의 상단 메뉴, 댓글, 권한 표시 같은 페이지 외곽 UI는 제외됩니다.
+                  </p>
                 </div>
-                <div className="space-y-2 rounded-lg border border-white/10 bg-black/15 p-3 text-xs text-white/65">
-                  <h4 className="font-semibold text-cyan-200">주요진행업무</h4>
-                  <p>파트: {mainProgressWork.workGroup}</p>
-                  <p>수정 페이지: {selectedMainPage?.title || "선택 필요"}</p>
-                  {mainProgressWork.rows.map((row, index) => (
-                    <div key={index} className="rounded-md bg-white/[0.04] p-2 text-white/70">
-                      <div className="font-semibold text-white">{row.mainWorkName || "주요 진행중 업무 제목 입력 필요"} · {row.status}</div>
-                      <div className="mt-1">등록일: {formatDisplayMonth(row.registrationMonth)}</div>
-                      <div className="mt-1">진행경과: {row.unitWorkLink || "단위업무 전송 후 자동 입력됩니다."}</div>
-                    </div>
-                  ))}
-                </div>
+                <span className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-1 text-[11px] font-semibold text-white/55">
+                  Confluence storage HTML
+                </span>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <article className="rounded-lg border border-amber-300/20 bg-black/20 p-3">
+                  <div className="mb-3">
+                    <h4 className="text-sm font-bold text-amber-100">생성될 단위업무 페이지</h4>
+                    <p className="mt-1 text-xs text-white/55">{unitWorkPage.title || "페이지명 입력 필요"}</p>
+                    <p className="mt-1 text-xs text-white/40">상위페이지: {selectedUnitParentPage?.title || "선택 필요"}</p>
+                  </div>
+                  <div className={wikiPreviewClass}>
+                    <h2 className="mb-4 text-2xl font-semibold text-[#172b4d]">{unitWorkPage.title || "페이지명 입력 필요"}</h2>
+                    <div dangerouslySetInnerHTML={{ __html: unitPreviewHtml }} />
+                  </div>
+                </article>
+
+                <article className="rounded-lg border border-cyan-300/20 bg-black/20 p-3">
+                  <div className="mb-3">
+                    <h4 className="text-sm font-bold text-cyan-100">주요진행업무에 추가될 내용</h4>
+                    <p className="mt-1 text-xs text-white/55">수정 페이지: {selectedMainPage?.title || "선택 필요"}</p>
+                    <p className="mt-1 text-xs text-white/40">파트: {mainProgressWork.workGroup}</p>
+                  </div>
+                  <div
+                    className={wikiPreviewClass}
+                    dangerouslySetInnerHTML={{ __html: mainPreviewHtml }}
+                  />
+                  <p className="mt-2 text-xs leading-5 text-white/45">
+                    단위업무 링크는 전송 직후 생성된 실제 페이지 URL로 자동 치환됩니다.
+                  </p>
+                </article>
               </div>
             </section>
           )}

@@ -22,7 +22,6 @@ type VisualizationPopupProps = {
   onClose: () => void;
   transcript: TranscriptItem[];
   summary: MeetingSummary;
-  onJump: (index: number) => void;
 };
 
 export default function VisualizationPopup({
@@ -30,7 +29,6 @@ export default function VisualizationPopup({
   onClose,
   transcript,
   summary,
-  onJump,
 }: VisualizationPopupProps) {
   if (!isOpen) return null;
 
@@ -53,7 +51,7 @@ export default function VisualizationPopup({
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 sm:p-4">
-          <MeetingVisualization transcript={transcript} summary={summary} onJump={onJump} />
+          <MeetingVisualization transcript={transcript} summary={summary} />
         </div>
       </div>
     </div>

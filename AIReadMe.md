@@ -66,6 +66,9 @@
   - 실패한 방식: GitHub 커넥터의 Git blob API는 현재 설치 권한에서 `Resource not accessible by integration` 403으로 실패했다.
   - 성공한 방식: `brew install gh`로 GitHub CLI를 설치하고 `printf 'y\n' | gh auth login --hostname github.com --git-protocol https --web`로 device login을 완료한다.
   - 성공한 방식: 로그인 후 `gh auth setup-git`을 실행해야 일반 `git push origin main`이 gh credential을 사용한다.
+- GitHub 원격 pull은 샌드박스 DNS 제한으로 실패할 수 있다.
+  - 실패한 방식: 일반 권한의 `git pull --rebase --autostash https://github.com/aengun/briefly.git main`이 `Could not resolve host: github.com`로 실패했다.
+  - 성공한 방식: 같은 명령을 권한 상승으로 재시도해 원격 변경을 받고 로컬 변경은 autostash로 보존했다.
 
 ## 오류 기록 / Troubleshooting Log
 - 날짜: 2026-05-07

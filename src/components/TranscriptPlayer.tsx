@@ -11,6 +11,7 @@ export type TranscriptItem = {
   end?: number;
   startTime?: number;
   endTime?: number;
+  timingEstimated?: boolean;
 };
 
 export type TranscriptJumpTarget = {
@@ -43,6 +44,131 @@ const formatTime = (seconds?: number) => {
   return `${mm}:${ss}`;
 };
 
+const hasUsableDuration = (duration: number) => (
+  Number.isFinite(duration) && duration > 0.5
+);
+
+const clampSeconds = (value: number, min: number, max: number) => (
+  Math.max(min, Math.min(max, value))
+);
+
+const roundSeconds = (value: number) => Number(value.toFixed(2));
+
+const textWeight = (item: TranscriptItem) => (
+  Math.max(8, item.text.replace(/\s+/g, "").length)
+);
+
+const validStart = (item: TranscriptItem, duration: number) => {
+  const value = getStart(item);
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > duration + 5) return undefined;
+  return clampSeconds(value, 0, duration);
+};
+
+const validEnd = (item: TranscriptItem, duration: number, start: number) => {
+  const value = getEnd(item);
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= start || value > duration + 5) return undefined;
+  return clampSeconds(value, Math.min(duration, start + 0.2), duration);
+};
+
+function fillEstimatedRange(
+  result: TranscriptItem[],
+  from: number,
+  to: number,
+  rangeStart: number,
+  rangeEnd: number,
+) {
+  if (from > to) return;
+
+  const safeStart = clampSeconds(rangeStart, 0, rangeEnd);
+  const safeEnd = Math.max(safeStart + 0.2, rangeEnd);
+  const weights = result.slice(from, to + 1).map(textWeight);
+  let cursor = safeStart;
+
+  for (let index = from; index <= to; index += 1) {
+    const relative = index - from;
+    const remainingWeight = weights.slice(relative).reduce((sum, weight) => sum + weight, 0);
+    const remainingDuration = Math.max(0.2, safeEnd - cursor);
+    const segmentDuration = index === to
+      ? remainingDuration
+      : Math.max(0.8, remainingDuration * (weights[relative] / Math.max(remainingWeight, 1)));
+    const start = cursor;
+    const end = index === to ? safeEnd : Math.min(safeEnd, cursor + segmentDuration);
+
+    result[index] = {
+      ...result[index],
+      start: roundSeconds(start),
+      end: roundSeconds(Math.max(end, start + 0.2)),
+      timingEstimated: true,
+    };
+    cursor = end;
+  }
+}
+
+function buildPlayableTranscript(transcript: TranscriptItem[], duration: number) {
+  if (!hasUsableDuration(duration) || transcript.length === 0) return transcript;
+
+  const result = transcript.map(item => ({ ...item }));
+  let previousTimedStart = 0;
+
+  for (let index = 0; index < result.length; index += 1) {
+    const start = validStart(result[index], duration);
+    if (typeof start !== "number") continue;
+
+    const safeStart = clampSeconds(Math.max(start, previousTimedStart), 0, duration);
+    const end = validEnd(result[index], duration, safeStart);
+    result[index] = {
+      ...result[index],
+      start: roundSeconds(safeStart),
+      ...(typeof end === "number" ? { end: roundSeconds(end) } : {}),
+    };
+    previousTimedStart = safeStart;
+  }
+
+  let index = 0;
+  while (index < result.length) {
+    if (typeof getStart(result[index]) === "number") {
+      index += 1;
+      continue;
+    }
+
+    const from = index;
+    while (index < result.length && typeof getStart(result[index]) !== "number") index += 1;
+    const to = index - 1;
+    const previous = from > 0 ? result[from - 1] : undefined;
+    const next = index < result.length ? result[index] : undefined;
+    const previousEnd = previous ? getEnd(previous) ?? getStart(previous) ?? 0 : 0;
+    const nextStart = next ? getStart(next) ?? duration : duration;
+    const rangeStart = clampSeconds(previousEnd, 0, Math.max(0, duration - 0.2));
+    const rangeEnd = clampSeconds(Math.max(nextStart, rangeStart + 0.2), Math.min(duration, rangeStart + 0.2), duration);
+
+    fillEstimatedRange(
+      result,
+      from,
+      to,
+      rangeStart,
+      rangeEnd,
+    );
+  }
+
+  for (let itemIndex = 0; itemIndex < result.length; itemIndex += 1) {
+    const start = getStart(result[itemIndex]);
+    if (typeof start !== "number") continue;
+
+    const end = getEnd(result[itemIndex]);
+    if (typeof end === "number" && end > start) continue;
+
+    const nextStart = itemIndex + 1 < result.length ? getStart(result[itemIndex + 1]) : duration;
+    const naturalEnd = start + Math.max(1, textWeight(result[itemIndex]) / 8);
+    result[itemIndex] = {
+      ...result[itemIndex],
+      end: roundSeconds(clampSeconds(Math.min(nextStart ?? naturalEnd, naturalEnd), Math.min(duration, start + 0.2), duration)),
+      timingEstimated: true,
+    };
+  }
+
+  return result;
+}
+
 export default function TranscriptPlayer({
   audioUrl,
   transcript,
@@ -65,12 +191,14 @@ export default function TranscriptPlayer({
   const [audioErrorState, setAudioErrorState] = useState({ audioUrl: "", hasError: false });
   const audioError = Boolean(audioUrl && audioErrorState.audioUrl === audioUrl && audioErrorState.hasError);
 
-  const hasTimedSegments = transcript.some(item => typeof getStart(item) === "number");
+  const playableTranscript = useMemo(() => buildPlayableTranscript(transcript, duration), [duration, transcript]);
+  const hasTimedSegments = playableTranscript.some(item => typeof getStart(item) === "number");
+  const usesEstimatedTiming = playableTranscript.some(item => item.timingEstimated);
   const speakers = useMemo(() => (
-    Array.from(new Set(transcript.map(item => item.speaker || "화자 미분류"))).filter(Boolean)
-  ), [transcript]);
+    Array.from(new Set(playableTranscript.map(item => item.speaker || "화자 미분류"))).filter(Boolean)
+  ), [playableTranscript]);
 
-  const filteredTranscript = transcript
+  const filteredTranscript = playableTranscript
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => {
       const speaker = item.speaker || "화자 미분류";
@@ -79,7 +207,7 @@ export default function TranscriptPlayer({
       return matchesSpeaker && matchesQuery;
     });
 
-  const lastTimedStart = transcript.reduce((max, item) => {
+  const lastTimedStart = playableTranscript.reduce((max, item) => {
     const start = getStart(item);
     return typeof start === "number" ? Math.max(max, start) : max;
   }, 0);
@@ -109,8 +237,8 @@ export default function TranscriptPlayer({
     const transcriptTime = Math.max(0, time - syncOffset);
 
     let fallback = -1;
-    for (let index = 0; index < transcript.length; index += 1) {
-      const item = transcript[index];
+    for (let index = 0; index < playableTranscript.length; index += 1) {
+      const item = playableTranscript[index];
       const start = getStart(item);
       const end = getEnd(item);
       if (typeof start !== "number") continue;
@@ -121,7 +249,7 @@ export default function TranscriptPlayer({
   };
 
   const seekToSegment = useCallback((index: number) => {
-    const segment = transcript[index];
+    const segment = playableTranscript[index];
     if (!segment) return;
 
     setCurrentIndex(index);
@@ -133,7 +261,7 @@ export default function TranscriptPlayer({
     audio.currentTime = nextTime;
     setCurrentTime(nextTime);
     audio.play().catch(() => undefined);
-  }, [audioUrl, syncOffset, transcript]);
+  }, [audioUrl, playableTranscript, syncOffset]);
 
   useEffect(() => {
     if (!jumpTarget) return;
@@ -169,7 +297,7 @@ export default function TranscriptPlayer({
           <div>
             <h3 className="text-2xl font-bold text-white">{title}</h3>
             <p className="mt-1 text-xs text-white/45">
-              {transcript.length > 0 ? `${transcript.length}개 원문 구간` : "저장된 원문 없음"}
+              {playableTranscript.length > 0 ? `${playableTranscript.length}개 원문 구간` : "저장된 원문 없음"}
             </p>
           </div>
 
@@ -301,7 +429,12 @@ export default function TranscriptPlayer({
 
         {audioUrl && transcript.length > 0 && !hasTimedSegments ? (
           <div className="mt-3 rounded-xl border border-amber-400/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-            이 회의록은 시간 정보가 없어 음성 위치 이동을 지원하지 않습니다.
+            {hasUsableDuration(duration) ? "이 회의록은 시간 정보가 없어 음성 위치 이동을 지원하지 않습니다." : "음성 길이를 확인한 뒤 원문 위치 이동을 준비합니다."}
+          </div>
+        ) : null}
+        {audioUrl && usesEstimatedTiming ? (
+          <div className="mt-3 rounded-xl border border-cyan-400/20 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
+            일부 원문 구간은 오디오 길이와 주변 문장 기준으로 위치를 보정했습니다. 싱크 보정으로 미세 조정할 수 있습니다.
           </div>
         ) : null}
         {durationMismatch ? (
@@ -353,7 +486,9 @@ export default function TranscriptPlayer({
               >
                 <div className="flex flex-wrap items-center gap-2">
                   {timeLabel ? (
-                    <span className="rounded-md border border-white/10 bg-slate-950/50 px-2 py-1 text-[11px] font-semibold text-cyan-100">{timeLabel}</span>
+                    <span className="rounded-md border border-white/10 bg-slate-950/50 px-2 py-1 text-[11px] font-semibold text-cyan-100">
+                      {timeLabel}{item.timingEstimated ? " 추정" : ""}
+                    </span>
                   ) : (
                     <span className="rounded-md border border-white/10 bg-slate-950/50 px-2 py-1 text-[11px] font-semibold text-white/35">시간 정보 없음</span>
                   )}

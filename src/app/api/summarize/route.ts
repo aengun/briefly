@@ -84,6 +84,7 @@ type AnalysisErrorBody = {
 // Initialize Gemini API
 const apiKey = process.env.GEMINI_API_KEY || '';
 const openAIKey = process.env.OPENAI_API_KEY || '';
+const enableOpenAIFallback = process.env.ENABLE_OPENAI_FALLBACK === "true";
 const genAI = new GoogleGenerativeAI(apiKey);
 const fileManager = new GoogleAIFileManager(apiKey);
 const GEMINI_STEP_TIMEOUT_MS = 300_000;
@@ -91,6 +92,8 @@ const OPENAI_STEP_TIMEOUT_MS = 600_000;
 const OPENAI_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
 const OPENAI_SUMMARY_MODEL = "gpt-5.2";
 const OPENAI_SUMMARY_FALLBACK_MODEL = "gpt-5-mini";
+const TRANSCRIPT_MAX_OUTPUT_TOKENS = 65_536;
+const SUMMARY_MAX_OUTPUT_TOKENS = 4_096;
 
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = GEMINI_STEP_TIMEOUT_MS) {
   return new Promise<T>((resolve, reject) => {
@@ -157,8 +160,8 @@ const transcriptResponseSchema = {
           id: { type: SchemaType.STRING },
           speaker: { type: SchemaType.STRING },
           text: { type: SchemaType.STRING },
-          start: { type: SchemaType.INTEGER },
-          end: { type: SchemaType.INTEGER },
+          start: { type: SchemaType.NUMBER },
+          end: { type: SchemaType.NUMBER },
         },
         required: ["text"],
       },
@@ -196,10 +199,14 @@ const summaryResponseSchema = {
   required: ["summary"],
 } satisfies ResponseSchema;
 
-function buildStructuredGenerationConfig(schema: typeof transcriptResponseSchema | typeof summaryResponseSchema) {
+function buildStructuredGenerationConfig(
+  schema: typeof transcriptResponseSchema | typeof summaryResponseSchema,
+  maxOutputTokens: number
+) {
   return {
     responseMimeType: "application/json",
     responseSchema: schema,
+    maxOutputTokens,
     temperature: 0.2,
     topP: 0.8,
     topK: 20,
@@ -438,6 +445,13 @@ function parseLooseTranscriptResponse(text: string): TranscriptPayload | null {
   return transcript.length > 0 ? { transcript } : null;
 }
 
+function parseTranscriptResponseText(text: string) {
+  return (
+    parseStructuredResponse<TranscriptResponseSchema>(text) ||
+    parseLooseTranscriptResponse(text)
+  ) as TranscriptPayload | null;
+}
+
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -446,7 +460,7 @@ function normalizeTranscriptSegments(
   transcript?: TranscriptPayload["transcript"],
   options: { keepTiming?: boolean } = { keepTiming: true }
 ) {
-  return (transcript || [])
+  const normalized = (transcript || [])
     .map((item, index) => {
       const start = options.keepTiming !== false && typeof item.start === "number"
         ? item.start
@@ -468,6 +482,47 @@ function normalizeTranscriptSegments(
       };
     })
     .filter(item => item.text.trim());
+
+  if (options.keepTiming === false) return normalized;
+  return repairTranscriptTiming(normalized);
+}
+
+function estimateSegmentSeconds(text: string) {
+  const compactLength = compactText(text).length;
+  return Math.max(1.2, Math.min(12, compactLength / 7));
+}
+
+function repairTranscriptTiming(transcript: NonNullable<TranscriptPayload["transcript"]>) {
+  let previousStart = 0;
+  let previousEnd = 0;
+
+  return transcript.map(item => {
+    const start = typeof item.start === "number" && Number.isFinite(item.start) && item.start >= 0
+      ? item.start
+      : undefined;
+    const end = typeof item.end === "number" && Number.isFinite(item.end) && item.end >= 0
+      ? item.end
+      : undefined;
+
+    if (typeof start !== "number" && typeof end !== "number") return item;
+
+    const safeStart = Math.max(previousStart, typeof start === "number"
+      ? start
+      : Math.max(0, (end || previousEnd) - estimateSegmentSeconds(item.text || "")));
+    const fallbackEnd = safeStart + estimateSegmentSeconds(item.text || "");
+    const safeEnd = typeof end === "number" && end > safeStart
+      ? Math.max(end, previousEnd)
+      : Math.max(fallbackEnd, previousEnd);
+
+    previousStart = safeStart;
+    previousEnd = safeEnd;
+
+    return {
+      ...item,
+      start: Number(safeStart.toFixed(2)),
+      end: Number(safeEnd.toFixed(2)),
+    };
+  });
 }
 
 function compactText(value?: string) {
@@ -521,6 +576,53 @@ function normalizeTranscriptPayload(transcriptData: TranscriptPayload | Record<s
   return {
     transcript: normalizeTranscriptSegments(rawTranscript, { keepTiming }),
   };
+}
+
+function transcriptStats(transcript: TranscriptPayload["transcript"] = []) {
+  return (transcript || []).reduce((stats, item) => {
+    const text = compactText(item.text);
+    return {
+      segments: stats.segments + 1,
+      textLength: stats.textLength + text.length,
+      timedSegments: stats.timedSegments + (typeof item.start === "number" ? 1 : 0),
+    };
+  }, { segments: 0, textLength: 0, timedSegments: 0 });
+}
+
+function chooseRicherTranscript(current: TranscriptPayload, candidate: TranscriptPayload | null) {
+  if (!candidate?.transcript?.length) return current;
+  const currentStats = transcriptStats(current.transcript);
+  const candidateStats = transcriptStats(candidate.transcript);
+  if (candidateStats.textLength < currentStats.textLength * 0.85) return current;
+
+  const currentScore = currentStats.textLength + currentStats.segments * 20 + currentStats.timedSegments * 10;
+  const candidateScore = candidateStats.textLength + candidateStats.segments * 20 + candidateStats.timedSegments * 10;
+  return candidateScore >= currentScore * 0.95 ? candidate : current;
+}
+
+function buildTranscriptReviewPrompt(transcript: TranscriptPayload["transcript"] = []) {
+  return `
+아래 초안 transcript를 같은 원본 오디오와 대조해 전체 대화 내역을 다시 반환하세요.
+
+[검수 지침]
+1. 원본 오디오를 처음부터 끝까지 다시 확인하고, 초안에서 빠진 발화/문장/짧은 응답을 추가하세요.
+2. 요약하지 말고 실제 들리는 말을 transcript text에 최대한 그대로 적으세요.
+3. "네", "맞습니다", "좋습니다" 같은 짧은 응답도 대화 흐름에 의미가 있으면 누락하지 마세요.
+4. 초안에 있던 실제 발화를 삭제하지 마세요. 단, 명백한 오인식은 원본 오디오에 맞게 고치세요.
+5. 각 항목은 실제 음성의 시작/종료 시각을 오디오 시작 기준 초 단위 숫자(start/end)로 넣으세요.
+6. 단어 단위가 어렵다면 최소한 문장 또는 짧은 발화 단위로 맞추고, start/end는 시간 순서대로 증가해야 합니다.
+7. 파일명/업로드 시간/녹음 시간 같은 메타데이터는 사용하지 마세요.
+8. 제공된 오디오에 없는 대화, 담당자, 주제, 업무 내용은 만들지 마세요.
+
+초안 transcript:
+${JSON.stringify(transcript || [])}
+
+{
+  "transcript": [
+    { "id": "seg-1", "speaker": "성함 또는 참가자 A", "text": "대화 내용", "start": 0.0, "end": 4.2 }
+  ]
+}
+`;
 }
 
 function toTranscriptRequest(fileUri: string, mimeType: string, prompt: string) {
@@ -690,11 +792,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    if (!apiKey && !openAIKey) {
+    if (!apiKey) {
       return createAnalysisErrorResponse(
         500,
         "CONFIG_ERROR",
-        "GEMINI_API_KEY 또는 OPENAI_API_KEY가 설정되지 않았습니다.",
+        "GEMINI_API_KEY가 설정되지 않았습니다.",
         "분석 서비스 설정에 문제가 있습니다. 관리자에게 문의해주세요.",
         "config"
       );
@@ -734,34 +836,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const uploadPath = join(uploadDir, fileName);
     await writeFile(uploadPath, buffer);
     const audioUrl = `/uploads/${fileName}`;
-
-    let openAIPrimaryError: unknown = null;
-    if (openAIKey) {
-      try {
-        const openAIResult = await transcribeWithOpenAI(uploadPath, mimeType, fileName);
-        return NextResponse.json({
-          ...openAIResult.summaryData,
-          transcript: openAIResult.transcriptData.transcript,
-          audioUrl,
-          usedModel: openAIResult.usedModel
-        });
-      } catch (error: unknown) {
-        openAIPrimaryError = error;
-        console.warn("OpenAI primary path failed, trying Gemini...", getErrorMessage(error));
-      }
-    }
-
-    if (!apiKey) {
-      const classified = classifyUnknownError(openAIPrimaryError || new Error("OPENAI_ANALYSIS_FAILED"), "transcription");
-      return createAnalysisErrorResponse(
-        classified.status,
-        classified.errorCode,
-        classified.message,
-        classified.userMessage,
-        classified.stage,
-        openAIPrimaryError
-      );
-    }
 
     // Upload to Gemini
     let uploadResult;
@@ -812,11 +886,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 실제로 들리는 말만 적고, 파일명/업로드 시간/녹음 시간 같은 메타데이터는 사용하지 마세요.
 대화가 전혀 들리지 않거나 무음, 잡음, 짧은 테스트 음성뿐이라면 "transcript": [] 를 반환하세요.
 제공된 오디오에 없는 대화, 담당자, 주제, 업무 내용은 절대 만들지 마세요.
-정확한 timestamp를 제공할 수 없으면 start/end를 넣지 마세요. 추정 timestamp는 금지합니다.
+각 항목은 실제 음성의 시작/종료 시각을 오디오 시작 기준 초 단위 숫자(start/end)로 넣으세요.
+완전한 단어 단위 싱크가 어렵다면 최소한 문장 또는 짧은 발화 단위로 실제 들리는 구간에 맞추세요.
+긴 발화는 1문장 또는 8~15초 이하 단위로 나누고, start/end는 시간 순서대로 증가해야 합니다.
+확실하지 않은 경우에도 가장 가까운 실제 음성 구간을 추정해 넣되, 대화 내용을 새로 만들지는 마세요.
 
 {
   "transcript": [
-    { "id": "seg-1", "speaker": "성함 또는 참가자 A", "text": "대화 내용" }
+    { "id": "seg-1", "speaker": "성함 또는 참가자 A", "text": "대화 내용", "start": 0.0, "end": 4.2 }
   ]
 }
 `;
@@ -824,20 +901,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         try {
           tResult = await withTimeout(model.generateContent({
             contents: toTranscriptRequest(uploadResult.file.uri, uploadResult.file.mimeType, transcriptPrompt),
-            generationConfig: buildStructuredGenerationConfig(transcriptResponseSchema),
+            generationConfig: buildStructuredGenerationConfig(transcriptResponseSchema, TRANSCRIPT_MAX_OUTPUT_TOKENS),
           }), `transcription:${modelName}`, GEMINI_STEP_TIMEOUT_MS);
         } catch (error) {
           lastError = error;
           throw error;
         }
         const transcriptText = tResult.response.text();
-        const parsedTranscript = (
-          parseStructuredResponse<TranscriptResponseSchema>(transcriptText) ||
-          parseLooseTranscriptResponse(transcriptText)
-        ) as TranscriptPayload | null;
+        const parsedTranscript = parseTranscriptResponseText(transcriptText);
         if (!parsedTranscript) {
-          console.warn(`Transcript parse failed for ${modelName}, trying OpenAI fallback...`, transcriptText.slice(0, 200));
-          if (openAIKey) {
+          console.warn(`Transcript parse failed for ${modelName}`, transcriptText.slice(0, 200));
+          if (enableOpenAIFallback && openAIKey) {
             try {
               const fallbackResult = await transcribeWithOpenAI(uploadPath, mimeType, fileName);
               return NextResponse.json({
@@ -854,7 +928,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           lastError = new Error(`PARSE_FAILED: transcript:${modelName}`);
           continue;
         }
-        transcriptData = normalizeTranscriptPayload(parsedTranscript, false);
+        let reviewedTranscript = parsedTranscript;
+        try {
+          const reviewPrompt = buildTranscriptReviewPrompt(parsedTranscript.transcript || []);
+          const reviewResult = await withTimeout(model.generateContent({
+            contents: toTranscriptRequest(uploadResult.file.uri, uploadResult.file.mimeType, reviewPrompt),
+            generationConfig: buildStructuredGenerationConfig(transcriptResponseSchema, TRANSCRIPT_MAX_OUTPUT_TOKENS),
+          }), `transcription-review:${modelName}`, GEMINI_STEP_TIMEOUT_MS);
+          reviewedTranscript = chooseRicherTranscript(
+            parsedTranscript,
+            parseTranscriptResponseText(reviewResult.response.text())
+          );
+        } catch (reviewError) {
+          console.warn(`Transcript review failed for ${modelName}, using first pass...`, getErrorMessage(reviewError));
+        }
+
+        transcriptData = normalizeTranscriptPayload(reviewedTranscript, true);
         const normalizedTranscript = transcriptData.transcript;
         const validation = validateAnalyzableContent(normalizedTranscript);
         if (!validation.isAnalyzable) {
@@ -873,7 +962,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         try {
           sResult = await withTimeout(model.generateContent({
             contents: toSummaryRequest(summaryPrompt),
-            generationConfig: buildStructuredGenerationConfig(summaryResponseSchema),
+            generationConfig: buildStructuredGenerationConfig(summaryResponseSchema, SUMMARY_MAX_OUTPUT_TOKENS),
           }), `summary:${modelName}`, GEMINI_STEP_TIMEOUT_MS);
         } catch (error) {
           lastError = error;

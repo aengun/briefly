@@ -5,7 +5,7 @@ import { Calendar, UsersRound, Save, Loader2, Users, UserPlus, Share2, LayoutGri
 import { useRouter } from "next/navigation";
 import MeetingConfluenceModal from "./MeetingConfluenceModal";
 import Modal from "./Modal";
-import TranscriptPlayer, { type TranscriptJumpTarget } from "./TranscriptPlayer";
+import TranscriptPlayer from "./TranscriptPlayer";
 import VisualizationPopup from "./VisualizationPopup";
 import WorkProgressModal from "./WorkProgressModal";
 import { validateAnalyzableContent } from "@/lib/analysis-guard";
@@ -79,7 +79,6 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
   const [showTaskTemplate, setShowTaskTemplate] = useState(false);
   const [showVisualizationPopup, setShowVisualizationPopup] = useState(false);
   const [showMeetingConfluenceModal, setShowMeetingConfluenceModal] = useState(false);
-  const [transcriptJumpTarget, setTranscriptJumpTarget] = useState<TranscriptJumpTarget | null>(null);
   const [summaryStructure, setSummaryStructure] = useState<MeetingSummaryStructure>(() => inferMeetingSummaryStructure({
     asis: initialMeeting.asis,
     tobe: initialMeeting.tobe,
@@ -471,7 +470,6 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
             transcript={meeting.transcript}
             title="대화 원문"
             emptyMessage="대화 원문을 불러올 수 없습니다."
-            jumpTarget={transcriptJumpTarget}
           />
         </div>
       </div>
@@ -483,10 +481,6 @@ export default function MeetingDetailClient({ initialMeeting }: { initialMeeting
         onClose={() => setShowVisualizationPopup(false)}
         transcript={meeting.transcript}
         summary={meetingSummary}
-        onJump={index => setTranscriptJumpTarget(previous => ({
-          index,
-          nonce: (previous?.nonce || 0) + 1,
-        }))}
       />
 
       <MeetingConfluenceModal

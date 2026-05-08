@@ -5,7 +5,7 @@ import { UploadCloud, FileAudio, Loader2, CheckCircle2, Save, Mic, MicOff, Squar
 import { useRouter } from "next/navigation";
 import Modal from "../components/Modal";
 import MeetingConfluenceModal from "../components/MeetingConfluenceModal";
-import TranscriptPlayer, { type TranscriptJumpTarget } from "../components/TranscriptPlayer";
+import TranscriptPlayer from "../components/TranscriptPlayer";
 import VisualizationPopup from "../components/VisualizationPopup";
 import WorkProgressModal from "../components/WorkProgressModal";
 import { validateAnalyzableContent } from "@/lib/analysis-guard";
@@ -289,7 +289,6 @@ export default function Home() {
   const animationFrameRef = useRef<number | null>(null);
 
   const [showTaskTemplate, setShowTaskTemplate] = useState(false);
-  const [transcriptJumpTarget, setTranscriptJumpTarget] = useState<TranscriptJumpTarget | null>(null);
   const [showVisualizationPopup, setShowVisualizationPopup] = useState(false);
   const [showMeetingConfluenceModal, setShowMeetingConfluenceModal] = useState(false);
   const [summaryStructure, setSummaryStructure] = useState<MeetingSummaryStructure>("안건중심");
@@ -1122,7 +1121,6 @@ export default function Home() {
                 transcript={result.transcript}
                 title="대화 원문"
                 emptyMessage="대화 원문을 불러올 수 없습니다."
-                jumpTarget={transcriptJumpTarget}
               />
             </div>
           </div>
@@ -1157,10 +1155,6 @@ export default function Home() {
         onClose={() => setShowVisualizationPopup(false)}
         transcript={result?.transcript || []}
         summary={result?.summary || { asis: "", tobe: "", expected_effects: "", schedule: [] }}
-        onJump={index => setTranscriptJumpTarget(previous => ({
-          index,
-          nonce: (previous?.nonce || 0) + 1,
-        }))}
       />
       <MeetingConfluenceModal
         isOpen={showMeetingConfluenceModal && Boolean(result)}
